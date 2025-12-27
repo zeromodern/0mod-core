@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON to CSV Converter - 0mod</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            black: '#0f172a',
+                            gray: '#f8fafc',
+                            accent: '#10b981',
+                        }
+                    },
+                    boxShadow: {
+                        'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="../shared/base.css">
+    <meta name="description" content="Convert JSON data to CSV format instantly in your browser.">
+</head>
+<body class="bg-brand-gray dark:bg-slate-950 min-h-screen font-sans text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200">
+    <div id="app" class="max-w-5xl mx-auto px-4 py-12"></div>
+
+    <script src="../shared/ui-kit.js"></script>
+    <script src="../shared/icons.js"></script>
+    <script>
+        const app = document.getElementById('app');
+
+        // State
+        let jsonInput = '';
+        let csvOutput = '';
+        let error = null;
+
+        // Logic
+        function flattenObject(obj, prefix = '') {
+            return Object.keys(obj).reduce((acc, k) => {
+                const pre = prefix.length ? prefix + '.' : '';
+                if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+                    Object.assign(acc, flattenObject(obj[k], pre + k));
+                } else {
+                    acc[pre + k] = obj[k];
+                }
+                return acc;
+            }, {});
+        }
+
+        function convertToCSV(input) {
+            let array = typeof input !== 'object' ? JSON.parse(input) : input;
+            
+            // Wrap non-array objects in an array
+            if (!Array.isArray(array)) {
+                array = [array];
+            }
+
+            if (array.length === 0) {
+                throw new Error("Input must be a non-empty object or array of objects.");
+            }
+
+            // Flatten all objects and collect all unique keys for headers
+            const flattenedArray = array.map(obj => {
+                if (typeof obj !== 'object' || obj === null) {
+                    return { value: obj };
+                }
+                return flattenObject(obj);
+            });
+
+            const allKeys = new Set();
+            flattenedArray.forEach(obj => {
+                Object.keys(obj).forEach(key => allKeys.add(key));
+            });
+
+            const headers = Array.from(allKeys);
+            let str = headers.join(',') + '\r\n';
+
+            for (let i = 0; i < flattenedArray.length; i++) {
+                let line = '';
+                for (let j = 0; j < headers.length; j++) {
+                    if (line !== '') line += ',';
+                    
+                    let value = flattenedArray[i][headers[j]];
+                    if (value === undefined || value === null) {
+                        value = '';
+                    } else if (typeof value === 'object') {
+                        value = JSON.stringify(value);
+                    }
+
+                    let valueStr = String(value);
+                    // Escape quotes and wrap in quotes if needed
+                    if (valueStr.includes(',') || valueStr.includes('"') || valueStr.includes('\n')) {
+                        valueStr = '"' + valueStr.replace(/"/g, '""') + '"';
+                    }
+                    line += valueStr;
+                }
+                str += line + '\r\n';
+            }
+
+            return str;
+        }
+
+        function handleConvert() {
+            error = null;
+            csvOutput = '';
+            try {
+                if (!jsonInput.trim()) {
+                    throw new Error("Please enter some JSON.");
+                }
+                const parsed = JSON.parse(jsonInput);
+                csvOutput = convertToCSV(parsed);
+            } catch (e) {
+                error = e.message;
+            }
+            render();
+        }
+
+        function handleCopy() {
+            navigator.clipboard.writeText(csvOutput);
+            // Could show a toast here
+            alert('Copied to clipboard!');
+        }
+
+        function handleDownload() {
+            const blob = new Blob([csvOutput], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", "export.csv");
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        // Render
+        function render() {
+            const inputSection = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        ${zm.ui.TextArea({
+                            id: 'json-input',
+                            label: 'JSON Input',
+                            placeholder: '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]',
+                            value: jsonInput,
+                            rows: 15
+                        })}
+                        <div class="mt-2">
+                            ${zm.ui.Button({
+                                text: 'Convert to CSV',
+                                onClick: 'window.triggerConvert()',
+                                variant: 'primary',
+                                className: 'w-full'
+                            })}
+                        </div>
+                    </div>
+                    <div>
+                        ${zm.ui.TextArea({
+                            id: 'csv-output',
+                            label: 'CSV Output',
+                            placeholder: 'Result will appear here...',
+                            value: csvOutput,
+                            rows: 15
+                        })}
+                        <div class="mt-2 flex space-x-2">
+                            ${zm.ui.Button({
+                                text: `<div class="flex items-center space-x-2">${zm.icons.Clipboard} <span>Copy</span></div>`,
+                                onClick: 'window.triggerCopy()',
+                                variant: 'secondary',
+                                className: 'flex-1'
+                            })}
+                            ${zm.ui.Button({
+                                text: `<div class="flex items-center space-x-2">${zm.icons.Download} <span>Download</span></div>`,
+                                onClick: 'window.triggerDownload()',
+                                variant: 'secondary',
+                                className: 'flex-1'
+                            })}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            app.innerHTML = `
+                <div class="space-y-8">
+                    <header class="flex justify-between items-start">
+                        <div>
+                            <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">JSON to CSV</h1>
+                            <p class="text-slate-600 dark:text-slate-400">Convert JSON data to CSV format instantly in your browser.</p>
+                        </div>
+                        <button id="settings-btn" class="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" title="Settings">
+                            ${zm.icons.Settings || '⚙️'}
+                        </button>
+                    </header>
+
+                    ${error ? zm.ui.Alert({ title: 'Error', message: error, type: 'error' }) : ''}
+                    ${zm.ui.Card({ content: inputSection })}
+                    
+                    <div class="text-center text-sm text-slate-500 dark:text-slate-400">
+                        <p>100% Client-side processing. Your data never leaves your browser.</p>
+                    </div>
+                </div>
+            `;
+
+            const settingsBtn = document.getElementById('settings-btn');
+            if (settingsBtn) {
+                settingsBtn.onclick = () => window.zm.ui.openSettings();
+            }
+
+            // Re-attach listeners or update state on input
+            document.getElementById('json-input').addEventListener('input', (e) => {
+                jsonInput = e.target.value;
+            });
+        }
+
+        // Global handlers for inline onclicks
+        window.triggerConvert = handleConvert;
+        window.triggerCopy = handleCopy;
+        window.triggerDownload = handleDownload;
+
+        // Initialize theme
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', savedTheme === 'dark');
+        document.documentElement.dataset.theme = savedTheme;
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>

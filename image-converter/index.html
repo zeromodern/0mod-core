@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Converter - 0mod</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/heic2any"></script>
+    <script src="https://unpkg.com/utif"></script>
+    <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.0.0/dist/libheif.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            black: '#0f172a',
+                            gray: '#f8fafc',
+                            accent: '#10b981',
+                        }
+                    },
+                    boxShadow: {
+                        'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="../shared/base.css">
+    <meta name="description" content="Convert images between different formats instantly in your browser.">
+</head>
+<body class="bg-brand-gray dark:bg-slate-950 min-h-screen font-sans text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200">
+    <div id="app" class="max-w-5xl mx-auto px-4 py-12"></div>
+
+    <script src="../shared/ui-kit.js"></script>
+    <script src="../shared/icons.js"></script>
+    <script>
+        const app = document.getElementById('app');
+
+        // Default config
+        const defaultConfig = {
+            mode: 'convert'
+        };
+
+        // Merge injected config with defaults
+        const config = Object.assign({}, defaultConfig, window.APP_CONFIG || {});
+
+        // State
+        let inputFile = null;
+        let sourceBlob = null;
+        let outputBlob = null;
+        let outputFilename = '';
+        let inputFormat = config.input || '*';
+        let outputFormat = config.output || 'image/jpeg';
+        let isConverting = false;
+
+        // Conversion logic using Canvas API
+        async function convertImage(blob, format) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+
+                    if (format === 'image/heic') {
+                        // Use HEIC encoder
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        try {
+                            // Assuming libheif.encode is available
+                            const heicBlob = await libheif.encode(imageData);
+                            resolve(heicBlob);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    } else {
+                        // Handle JPEG transparency (fill white)
+                        if (format === 'image/jpeg') {
+                            // Create a temporary canvas to flatten transparency if needed,
+                            // or just fill rect before drawing.
+                            // Simple approach:
+                            const compositeCanvas = document.createElement('canvas');
+                            compositeCanvas.width = img.width;
+                            compositeCanvas.height = img.height;
+                            const compositeCtx = compositeCanvas.getContext('2d');
+                            compositeCtx.fillStyle = '#FFFFFF';
+                            compositeCtx.fillRect(0, 0, img.width, img.height);
+                            compositeCtx.drawImage(img, 0, 0);
+
+                            compositeCanvas.toBlob(resolve, format, 0.9);
+                        } else if (format === 'application/pdf') {
+                            const { jsPDF } = window.jspdf;
+                            const doc = new jsPDF({
+                                orientation: canvas.width > canvas.height ? 'l' : 'p',
+                                unit: 'px',
+                                format: [canvas.width, canvas.height]
+                            });
+                            doc.addImage(canvas, 'JPEG', 0, 0, canvas.width, canvas.height);
+                            const pdfBlob = doc.output('blob');
+                            resolve(pdfBlob);
+                        } else {
+                            canvas.toBlob(resolve, format, 0.9);
+                        }
+                    }
+                };
+                img.onerror = reject;
+                img.src = URL.createObjectURL(blob);
+            });
+        }
+
+        // Logic
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                inputFile = file;
+                outputFilename = file.name.split('.').slice(0, -1).join('.') || 'converted';
+                sourceBlob = null;
+                outputBlob = null;
+                isConverting = false;
+
+                // Determine format
+                const mimeType = file.type;
+                const extension = file.name.split('.').pop().toLowerCase();
+
+                if (mimeType === 'image/heic' || extension === 'heic') {
+                    // Process HEIC
+                    try {
+                        isConverting = true;
+                        render();
+                        sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
+                        isConverting = false;
+                    } catch (err) {
+                        alert('Failed to process HEIC file: ' + err.message);
+                        isConverting = false;
+                        render();
+                        return;
+                    }
+                } else if (mimeType === 'image/tiff' || extension === 'tiff' || extension === 'tif') {
+                    // Process TIFF
+                    try {
+                        isConverting = true;
+                        render();
+                        const arrayBuffer = await file.arrayBuffer();
+                        const ifds = UTIF.decode(arrayBuffer);
+                        const rgba = UTIF.toRGBA8(ifds[0]);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = ifds[0].width;
+                        canvas.height = ifds[0].height;
+                        const ctx = canvas.getContext('2d');
+                        const imageData = new ImageData(new Uint8ClampedArray(rgba), canvas.width, canvas.height);
+                        ctx.putImageData(imageData, 0, 0);
+                        sourceBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                        isConverting = false;
+                    } catch (err) {
+                        alert('Failed to process TIFF file: ' + err.message);
+                        isConverting = false;
+                        render();
+                        return;
+                    }
+                } else {
+                    // For other formats, use the file directly
+                    sourceBlob = file;
+                }
+
+                render();
+            }
+        }
+
+        function handleInputFormatChange(event) {
+            inputFormat = event.target.value;
+            render();
+        }
+
+        function handleOutputFormatChange(event) {
+            outputFormat = event.target.value;
+            render();
+        }
+
+        function handleConvert() {
+            if (!sourceBlob) {
+                alert('Please select an image file first.');
+                return;
+            }
+
+            isConverting = true;
+            render();
+
+            convertImage(sourceBlob, outputFormat).then(blob => {
+                outputBlob = blob;
+                isConverting = false;
+                render();
+            }).catch(err => {
+                console.error('Conversion failed:', err);
+                alert('Conversion failed. Please try again.');
+                isConverting = false;
+                render();
+            });
+        }
+
+        function handleDownload() {
+            if (!outputBlob) return;
+
+            const url = URL.createObjectURL(outputBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            const ext = outputFormat === 'application/pdf' ? 'pdf' : outputFormat.split('/')[1];
+            a.download = `${outputFilename}.${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function handleShare() {
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Image Converter - 0mod',
+                    text: 'Convert images between different formats on 0mod.',
+                    url: window.location.href
+                });
+            } else {
+                navigator.clipboard.writeText(window.location.href);
+                alert('Link copied to clipboard!');
+            }
+        }
+
+        function handleBookmark() {
+            navigator.clipboard.writeText(window.location.href);
+            alert('URL copied to clipboard! Press Ctrl+D (Cmd+D on Mac) to bookmark this page.');
+        }
+
+        // Render
+        function render() {
+            const inputOptions = [
+                { value: '*', label: 'All' },
+                { value: 'image/jpeg', label: 'JPG' },
+                { value: 'image/png', label: 'PNG' },
+                { value: 'image/webp', label: 'WEBP' },
+                { value: 'image/heic', label: 'HEIC' },
+                { value: 'image/tiff', label: 'TIFF' },
+                { value: 'image/bmp', label: 'BMP' },
+                { value: 'image/gif', label: 'GIF' }
+            ];
+
+            const outputOptions = [
+                { value: 'image/jpeg', label: 'JPG' },
+                { value: 'image/png', label: 'PNG' },
+                { value: 'image/webp', label: 'WEBP' },
+                { value: 'image/heic', label: 'HEIC' },
+                { value: 'image/bmp', label: 'BMP' },
+                { value: 'image/gif', label: 'GIF' },
+                { value: 'application/pdf', label: 'PDF' }
+            ];
+
+            const controlsRow = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    ${zm.ui.Select({
+                        id: 'input-format',
+                        label: 'Convert From',
+                        options: inputOptions,
+                        value: inputFormat,
+                        onChange: 'window.handleInputFormatChange(event)'
+                    })}
+                    ${zm.ui.Select({
+                        id: 'output-format',
+                        label: 'Convert To',
+                        options: outputOptions,
+                        value: outputFormat,
+                        onChange: 'window.handleOutputFormatChange(event)'
+                    })}
+                </div>
+            `;
+
+            const uploadArea = zm.ui.FileUpload({
+                id: 'file-upload',
+                label: 'Upload Image',
+                accept: inputFormat === '*' ? 'image/*' : inputFormat,
+                multiple: false,
+                fileTypeLabel: 'Image files only'
+            });
+
+            const previewArea = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div class="text-center">
+                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Input Image</h3>
+                        ${sourceBlob ? `<img src="${URL.createObjectURL(sourceBlob)}" alt="Input" class="max-w-full h-auto rounded-lg shadow-soft mx-auto" style="max-height: 200px;">` : '<div class="text-slate-500">No image selected</div>'}
+                    </div>
+                    <div class="text-center">
+                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Output Image</h3>
+                        ${outputBlob ? `<img src="${URL.createObjectURL(outputBlob)}" alt="Output" class="max-w-full h-auto rounded-lg shadow-soft mx-auto" style="max-height: 200px;">` : '<div class="text-slate-500">No conversion yet</div>'}
+                    </div>
+                </div>
+            `;
+
+            const actions = `
+                <div class="flex gap-4 justify-center mb-6">
+                    ${zm.ui.Button({
+                        text: isConverting ? 'Converting...' : 'Convert',
+                        onClick: 'window.handleConvert()',
+                        variant: 'primary',
+                        className: isConverting ? 'opacity-50 cursor-not-allowed' : '',
+                        disabled: isConverting
+                    })}
+                </div>
+                ${outputBlob ? zm.ui.DownloadSection({
+                    id: 'download',
+                    filename: outputFilename,
+                    extension: outputFormat === 'application/pdf' ? '.pdf' : '.' + outputFormat.split('/')[1],
+                    onFilenameChange: 'window.updateFilename(event)',
+                    onDownload: 'window.handleDownload()'
+                }) : ''}
+            `;
+
+            app.innerHTML = `
+                <div class="space-y-8">
+                    <header class="text-center">
+                        <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">Image Converter</h1>
+                        <p class="text-slate-600 dark:text-slate-400">Convert images between different formats instantly in your browser.</p>
+                    </header>
+
+                    ${controlsRow}
+                    ${uploadArea}
+                    ${previewArea}
+                    ${actions}
+
+                    <div class="text-center text-sm text-slate-500 dark:text-slate-400">
+                        <p>100% Client-side processing. Your data never leaves your browser.</p>
+                    </div>
+
+                    <footer class="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center gap-4">
+                            <span class="text-xs font-medium text-slate-400">v1.0.0</span>
+                            <button onclick="handleShare()" class="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
+                                Share Tool
+                            </button>
+                            <button onclick="handleBookmark()" class="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"></path></svg>
+                                Bookmark Tool
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-2 text-[10px] text-slate-400 uppercase tracking-widest font-bold">
+                            🛡️ Zero Uploads • 100% Private
+                        </div>
+                    </footer>
+                </div>
+            `;
+
+            // Attach event listeners
+            const fileInput = document.getElementById('file-upload');
+            if (fileInput) {
+                fileInput.addEventListener('change', handleFileSelect);
+            }
+
+            // Drag and drop support
+            const dropzone = document.getElementById('file-upload-dropzone');
+            if (dropzone) {
+                dropzone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropzone.classList.add('border-emerald-500', 'bg-emerald-50', 'dark:bg-emerald-900/20');
+                });
+                dropzone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    dropzone.classList.remove('border-emerald-500', 'bg-emerald-50', 'dark:bg-emerald-900/20');
+                });
+                dropzone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropzone.classList.remove('border-emerald-500', 'bg-emerald-50', 'dark:bg-emerald-900/20');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        // Simulate file select
+                        const fakeEvent = { target: { files: [files[0]] } };
+                        handleFileSelect(fakeEvent);
+                    }
+                });
+            }
+        }
+
+        // Global handlers
+        window.handleInputFormatChange = handleInputFormatChange;
+        window.handleOutputFormatChange = handleOutputFormatChange;
+        window.handleConvert = handleConvert;
+        window.handleDownload = handleDownload;
+        window.updateFilename = (event) => { outputFilename = event.target.value; };
+        window.handleShare = handleShare;
+        window.handleBookmark = handleBookmark;
+
+        // Initialize theme
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', savedTheme === 'dark');
+        document.documentElement.dataset.theme = savedTheme;
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>

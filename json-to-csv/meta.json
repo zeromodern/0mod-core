@@ -1,0 +1,12 @@
+{
+  "id": "json-to-csv",
+  "title": "JSON to CSV Converter",
+  "description": "Convert JSON data to CSV format instantly in your browser. No data is sent to any server.",
+  "keywords": ["json", "csv", "converter", "developer tools", "format"],
+  "version": "1.1.0",
+  "author": "0mod",
+  "created": "2024-05-22",
+  "theme_color": "#10b981",
+  "background_color": "#f8fafc",
+  "display": "standalone"
+}

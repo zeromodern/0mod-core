@@ -1,0 +1,159 @@
+/* 0mod Base Styles */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+    --brand-black: #0f172a;
+    --brand-gray: #f8fafc;
+    --brand-accent: #10b981;
+    --slate-900: #0f172a;
+    --slate-800: #1e293b;
+    --slate-600: #475569;
+    --slate-400: #94a3b8;
+    --slate-200: #e2e8f0;
+
+    /* Theme Variables - Light (Default) */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --border-color: #e2e8f0;
+    --shadow-color: rgba(0, 0, 0, 0.05);
+    --nav-bg: rgba(255, 255, 255, 0.8);
+}
+
+[data-theme="dark"] {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --border-color: #334155;
+    --shadow-color: rgba(0, 0, 0, 0.25);
+    --nav-bg: rgba(15, 23, 42, 0.8);
+    
+    /* Override slate colors for dark mode if needed */
+    --slate-200: #334155;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.grid-bg {
+    background-image: radial-gradient(var(--border-color) 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+
+/* Tailwind-like utility classes for non-Tailwind environments */
+.shadow-soft {
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Markdown Content Styling (Fallback/Override for Tailwind Prose) */
+#seo-content h1 {
+    font-size: 1.875rem; /* 30px */
+    line-height: 2.25rem; /* 36px */
+    font-weight: 700;
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    color: var(--text-primary);
+}
+
+#seo-content h2 {
+    font-size: 1.5rem; /* 24px */
+    line-height: 2rem; /* 32px */
+    font-weight: 600;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+}
+
+#seo-content h3 {
+    font-size: 1.25rem; /* 20px */
+    line-height: 1.75rem; /* 28px */
+    font-weight: 600;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+#seo-content p {
+    margin-bottom: 1.25rem;
+    line-height: 1.75;
+    color: var(--text-secondary);
+}
+
+#seo-content ul {
+    list-style-type: disc;
+    padding-left: 1.625rem;
+    margin-bottom: 1.25rem;
+    color: var(--text-secondary);
+}
+
+#seo-content ol {
+    list-style-type: decimal;
+    padding-left: 1.625rem;
+    margin-bottom: 1.25rem;
+    color: var(--text-secondary);
+}
+
+#seo-content li {
+    margin-bottom: 0.5rem;
+}
+
+#seo-content a {
+    color: var(--brand-accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+#seo-content a:hover {
+    text-decoration: underline;
+}
+
+#seo-content blockquote {
+    border-left-width: 4px;
+    border-left-color: var(--slate-200);
+    padding-left: 1rem;
+    font-style: italic;
+    color: var(--slate-600);
+    margin-bottom: 1.25rem;
+}
+
+[data-theme="dark"] #seo-content blockquote {
+    border-left-color: var(--slate-600);
+    color: var(--slate-400);
+}
+
+#seo-content code {
+    background-color: var(--slate-200);
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+    font-family: monospace;
+    color: var(--brand-black);
+}
+
+[data-theme="dark"] #seo-content code {
+    background-color: var(--slate-800);
+    color: var(--slate-200);
+}
+
+#seo-content pre {
+    background-color: var(--slate-800);
+    color: #f8fafc;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin-bottom: 1.5rem;
+}
+
+#seo-content pre code {
+    background-color: transparent;
+    padding: 0;
+    color: inherit;
+}

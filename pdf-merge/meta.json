@@ -1,0 +1,12 @@
+{
+  "id": "pdf-merge",
+  "title": "PDF Merge",
+  "description": "Merge multiple PDF files into one document securely in your browser.",
+  "keywords": ["pdf", "merge", "combine", "document", "utility"],
+  "version": "1.1.0",
+  "author": "0mod",
+  "created": "2024-05-22",
+  "theme_color": "#10b981",
+  "background_color": "#f8fafc",
+  "display": "standalone"
+}
