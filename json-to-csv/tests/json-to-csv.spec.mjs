@@ -1,60 +1,64 @@
-import { TestRunner, assert } from '../../test-helpers/test-framework.mjs';
+import { TestRunner } from '../../test-helpers/test-framework.mjs';
+import { expect } from '@playwright/test';
+import { testOffline } from '../../test-helpers/offline.mjs';
 
 const runner = new TestRunner('json-to-csv');
 
-async function run() {
-  let success = true;
+const runFunctionalTest = async (page) => {
+  const jsonInput = '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]';
+  const expectedCsv = 'name,age\nJohn,30\nJane,25\n';
+
+  await page.locator('#json-input').fill(jsonInput);
+  await page.getByRole('button', { name: 'Convert to CSV' }).click();
+
+  const outputValue = await page.locator('#csv-output').inputValue();
+  expect(outputValue).toBe(expectedCsv);
+
+  const downloadBtn = page.getByRole('button', { name: 'Download' });
+  await expect(downloadBtn).toBeVisible();
+};
+
+(async () => {
   try {
     await runner.setup();
 
-    success &= await runner.runTest('basic load', async (page, helper) => {
+    await runner.runTest('basic load', async (page, helper, reporter) => {
       await page.goto('/json-to-csv/');
-      const title = await page.title();
-      assert.matches(title, /JSON to CSV/);
+      await expect(page).toHaveTitle(/JSON to CSV/);
       
-      const h1 = await page.locator('h1').first().textContent();
-      assert.includes(h1, 'JSON to CSV');
+      const h1 = page.locator('h1').first();
+      await expect(h1).toContainText('JSON to CSV');
       
-      const appVisible = await page.locator('#app').isVisible();
-      assert.ok(appVisible, '#app should be visible');
+      const app = page.locator('#app');
+      await expect(app).toBeVisible();
     });
 
-    success &= await runner.runTest('core flow', async (page, helper) => {
+    await runner.runTest('core flow', async (page, helper, reporter) => {
       await page.goto('/json-to-csv/');
-      
-      const jsonInput = '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]';
-      const expectedCsv = 'name,age\nJohn,30\nJane,25\n';
-
-      await page.locator('#json-input').fill(jsonInput);
-      await page.getByRole('button', { name: 'Convert to CSV' }).click();
-
-      const outputValue = await page.locator('#csv-output').inputValue();
-      assert.strictEqual(outputValue, expectedCsv);
-
-      const downloadBtnVisible = await page.getByRole('button', { name: 'Download' }).isVisible();
-      assert.ok(downloadBtnVisible, 'Download button should be visible');
+      await runFunctionalTest(page);
     });
 
-    success &= await runner.runTest('error handling', async (page, helper) => {
+    await runner.runTest('error handling', async (page, helper, reporter) => {
       await page.goto('/json-to-csv/');
       
       await page.locator('#json-input').fill('invalid json');
       await page.getByRole('button', { name: 'Convert to CSV' }).click();
 
-      const alertVisible = await page.locator('.bg-red-50').isVisible();
-      assert.ok(alertVisible, 'Error alert should be visible');
+      const alert = page.locator('.bg-red-50');
+      await expect(alert).toBeVisible();
       
-      const alertText = await page.locator('.bg-red-50').textContent();
-      assert.includes(alertText, 'Unexpected token');
+      const alertText = await alert.textContent();
+      expect(alertText).toContain('Unexpected token');
+    });
+
+    await runner.runTest('should work offline', async (page, helper, reporter) => {
+      await testOffline(page, '/json-to-csv/', reporter, runFunctionalTest);
     });
 
   } catch (error) {
     console.error('Test suite failed:', error);
-    success = false;
+    process.exit(1);
   } finally {
-    await runner.teardown(success);
-    process.exit(success ? 0 : 1);
+    await runner.teardown();
   }
-}
-
-run();
+})();

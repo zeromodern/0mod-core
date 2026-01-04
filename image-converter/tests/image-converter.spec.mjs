@@ -1,76 +1,80 @@
-import { TestRunner, assert } from '../../test-helpers/test-framework.mjs';
+import { TestRunner } from '../../test-helpers/test-framework.mjs';
+import { expect } from '@playwright/test';
+import { Buffer } from 'buffer';
+import { testOffline } from '../../test-helpers/offline.mjs';
 
 const runner = new TestRunner('image-converter');
 
-async function run() {
-  let success = true;
+const runFunctionalTest = async (page) => {
+  // Create dummy image buffer (minimal PNG)
+  const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+  // Upload file
+  await page.setInputFiles('#file-upload', [
+    { name: 'test.png', mimeType: 'image/png', buffer: imageBuffer }
+  ]);
+
+  // Select output format to jpeg
+  await page.selectOption('#output-format', 'image/jpeg');
+
+  // Click convert
+  const convertBtn = page.getByRole('button', { name: 'Convert' });
+  await convertBtn.click();
+
+  // Wait for download section
+  const filenameInput = page.locator('#download-filename');
+  await expect(filenameInput).toBeVisible({ timeout: 10000 });
+  const filenameValue = await filenameInput.inputValue();
+  expect(filenameValue).toBe('test');
+
+  // Check extension
+  const extensionSpan = page.locator('#download-filename + span');
+  await expect(extensionSpan).toContainText('.jpeg');
+
+  // Click download button
+  const downloadBtn = page.getByRole('button', { name: 'Download' });
+  await downloadBtn.click();
+};
+
+(async () => {
   try {
     await runner.setup();
 
-    success &= await runner.runTest('basic load', async (page, helper) => {
+    await runner.runTest('basic load', async (page, helper, reporter) => {
       await page.goto('/image-converter/');
-      const title = await page.title();
-      assert.matches(title, /Image Converter/);
+      await expect(page).toHaveTitle(/Image Converter/);
 
-      const h1 = await page.locator('h1').first().textContent();
-      assert.includes(h1, 'Image Converter');
+      const h1 = page.locator('h1').first();
+      await expect(h1).toContainText('Image Converter');
 
-      const appVisible = await page.locator('#app').isVisible();
-      assert.ok(appVisible, '#app should be visible');
+      const app = page.locator('#app');
+      await expect(app).toBeVisible();
     });
 
-    success &= await runner.runTest('share and bookmark buttons present', async (page, helper) => {
+    await runner.runTest('share and bookmark buttons present', async (page, helper, reporter) => {
       await page.goto('/image-converter/');
 
       // Check buttons in the app's footer (within #app)
-      const appShareButton = await page.locator('#app button:has-text("Share Tool")');
-      assert.ok(await appShareButton.isVisible(), 'Share Tool button in app should be visible');
+      const shareBtn = page.locator('#app').getByRole('button', { name: 'Share Tool' });
+      await expect(shareBtn).toBeVisible();
 
-      const appBookmarkButton = await page.locator('#app button:has-text("Bookmark Tool")');
-      assert.ok(await appBookmarkButton.isVisible(), 'Bookmark Tool button in app should be visible');
+      const bookmarkBtn = page.locator('#app').getByRole('button', { name: 'Bookmark Tool' });
+      await expect(bookmarkBtn).toBeVisible();
     });
 
-    success &= await runner.runTest('conversion flow', async (page, helper) => {
+    await runner.runTest('conversion flow', async (page, helper, reporter) => {
       await page.goto('/image-converter/');
+      await runFunctionalTest(page);
+    });
 
-      // Create dummy image buffer (minimal PNG)
-      const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-
-      // Upload file
-      await page.setInputFiles('#file-upload', [
-        { name: 'test.png', mimeType: 'image/png', buffer: imageBuffer }
-      ]);
-
-      // Select output format to jpeg
-      await page.selectOption('#output-format', 'image/jpeg');
-
-      // Click convert
-      const convertBtn = page.getByRole('button', { name: 'Convert' });
-      await convertBtn.click();
-
-      // Wait for download section
-      const filenameInput = page.locator('#download-filename');
-      await filenameInput.waitFor({ state: 'visible', timeout: 10000 });
-      const filenameValue = await filenameInput.inputValue();
-      assert.strictEqual(filenameValue, 'test');
-
-      // Check extension
-      const extensionSpan = page.locator('#download-filename + span');
-      const extensionText = await extensionSpan.textContent();
-      assert.strictEqual(extensionText.trim(), '.jpeg');
-
-      // Click download button
-      const downloadBtn = page.getByRole('button', { name: 'Download' });
-      await downloadBtn.click();
+    await runner.runTest('should work offline', async (page, helper, reporter) => {
+      await testOffline(page, '/image-converter/', reporter, runFunctionalTest);
     });
 
   } catch (error) {
     console.error('Test suite failed:', error);
-    success = false;
+    process.exit(1);
   } finally {
-    await runner.teardown(success);
-    process.exit(success ? 0 : 1);
+    await runner.teardown();
   }
-}
-
-run();
+})();
