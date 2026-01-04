@@ -221,7 +221,7 @@ const openSettings = () => {
             </div>
             <div class="flex items-center gap-2">
               <span class="flex h-2 w-2 rounded-full ${isOffline ? 'bg-red-500' : 'bg-emerald-500'}"></span>
-              <span class="text-sm font-medium ${isOffline ? 'text-red-600' : 'text-emerald-600'}">${isOffline ? 'Offline' : 'Online'}</span>
+              <span class="text-sm font-medium ${isOffline ? 'text-red-600' : 'text-emerald-600'}">${isOffline ? 'Offline (Safe)' : 'Online'}</span>
             </div>
           </div>
 
