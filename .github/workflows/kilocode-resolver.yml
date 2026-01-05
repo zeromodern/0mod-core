@@ -194,10 +194,17 @@ jobs:
         env:
           KILOCODE_API_KEY: ${{ secrets.KILOCODE_API_KEY }}
         run: |
-          mkdir -p ~/.config/kilocode
-          cat > ~/.config/kilocode/config.json << EOF
+          mkdir -p ~/.kilocode
+          cat > ~/.kilocode/config.json << EOF
           {
-            "kilocodeToken": "$KILOCODE_API_KEY",
+            "profiles": [
+              {
+                "id": "default",
+                "provider": "kilocode",
+                "kilocodeToken": "$KILOCODE_API_KEY",
+                "kilocodeModel": "anthropic/claude-sonnet-4"
+              }
+            ],
             "autoApproval": {
               "enabled": true,
               "read": {

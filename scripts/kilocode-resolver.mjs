@@ -101,6 +101,10 @@ Please analyze the codebase and implement a fix for this issue. Make sure to:
  */
 export function generateKilocodeConfig(options = {}) {
   const {
+    apiKey = '',
+    provider = 'kilocode',
+    model = 'anthropic/claude-sonnet-4',
+    profileId = 'default',
     allowedCommands = ['npm', 'git', 'pnpm', 'yarn', 'node', 'npx', 'make', 'cargo', 'python', 'pip'],
     deniedCommands = ['rm -rf /', 'sudo'],
     enableBrowser = false,
@@ -109,7 +113,33 @@ export function generateKilocodeConfig(options = {}) {
     retryDelay = 10,
   } = options;
 
+  // Build the profile based on provider type
+  const profile = {
+    id: profileId,
+    provider,
+  };
+
+  // Add provider-specific fields
+  if (provider === 'kilocode') {
+    profile.kilocodeToken = apiKey;
+    profile.kilocodeModel = model;
+  } else if (provider === 'openrouter') {
+    profile.openRouterApiKey = apiKey;
+    profile.openRouterModelId = model;
+  } else if (provider === 'anthropic') {
+    profile.apiKey = apiKey;
+    profile.apiModelId = model;
+  } else if (provider === 'openai-native') {
+    profile.openAiNativeApiKey = apiKey;
+    profile.apiModelId = model;
+  } else {
+    // Generic fallback
+    profile.apiKey = apiKey;
+    profile.apiModelId = model;
+  }
+
   return {
+    profiles: [profile],
     autoApproval: {
       enabled: true,
       read: {
@@ -151,6 +181,14 @@ export function generateKilocodeConfig(options = {}) {
       },
     },
   };
+}
+
+/**
+ * Get the kilocode config file path
+ * @returns {string} Config file path
+ */
+export function getConfigPath() {
+  return '~/.kilocode/config.json';
 }
 
 /**
@@ -261,6 +299,7 @@ export default {
   parseGitHubEvent,
   generatePrompt,
   generateKilocodeConfig,
+  getConfigPath,
   generateBranchName,
   generateCommitMessage,
   generatePRBody,

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "serve . -p 3000",
     "test": "node scripts/test-runner.mjs",
-    "test:resolver": "node scripts/tests/kilocode-resolver.test.mjs"
+    "test:resolver": "node scripts/tests/kilocode-resolver.test.mjs && node scripts/tests/kilocode-config-integration.test.mjs"
   },
   "license": "Apache-2.0",
   "devDependencies": {
