@@ -78,7 +78,7 @@ export async function testOffline(page, url, reporter, runFunctionalTest) {
     // Assert that the offline indicator is visible and shows "Offline"
     const statusText = page.locator('#status-text');
     await expect(statusText).toBeVisible();
-    await expect(statusText).toHaveText('Offline');
+    await expect(statusText).toHaveText('Offline (Safe)');
     success('Offline indicator visible');
 
     // Assert that the app content is visible
