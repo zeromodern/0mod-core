@@ -8,7 +8,7 @@
   "theme_color": "#10b981",
   "icons": [
     {
-      "src": "../shared/icon.svg",
+      "src": "../shared/0mod-null.svg",
       "sizes": "any",
       "type": "image/svg+xml"
     }
