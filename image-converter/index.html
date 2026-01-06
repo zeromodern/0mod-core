@@ -175,11 +175,17 @@
 
         function handleInputFormatChange(event) {
             inputFormat = event.target.value;
+            // Reset content on input format change
+            inputFile = null;
+            sourceBlob = null;
+            outputBlob = null;
             render();
         }
 
         function handleOutputFormatChange(event) {
             outputFormat = event.target.value;
+            // Hide download button on output format change until converted again
+            outputBlob = null;
             render();
         }
 
@@ -287,14 +293,10 @@
             });
 
             const previewArea = `
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="mb-6">
                     <div class="text-center">
                         <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Input Image</h3>
                         ${sourceBlob ? `<img src="${URL.createObjectURL(sourceBlob)}" alt="Input" class="max-w-full h-auto rounded-lg shadow-soft mx-auto" style="max-height: 200px;">` : '<div class="text-slate-500">No image selected</div>'}
-                    </div>
-                    <div class="text-center">
-                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Output Image</h3>
-                        ${outputBlob ? `<img src="${URL.createObjectURL(outputBlob)}" alt="Output" class="max-w-full h-auto rounded-lg shadow-soft mx-auto" style="max-height: 200px;">` : '<div class="text-slate-500">No conversion yet</div>'}
                     </div>
                 </div>
             `;

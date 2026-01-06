@@ -67,6 +67,44 @@ const runFunctionalTest = async (page) => {
       await runFunctionalTest(page);
     });
 
+    await runner.runTest('UI state resets', async (page, helper, reporter) => {
+      await page.goto('/image-converter/');
+      
+      // Setup image
+      const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+      
+      // Upload and Convert
+      await page.setInputFiles('#file-upload', [
+        { name: 'test.png', mimeType: 'image/png', buffer: imageBuffer }
+      ]);
+      await page.selectOption('#output-format', 'image/jpeg');
+      await page.getByRole('button', { name: 'Convert' }).click();
+      
+      // Verify Download visible
+      await expect(page.locator('#download-filename')).toBeVisible();
+      
+      // Change Output Format -> Download should hide
+      await page.selectOption('#output-format', 'image/png');
+      await expect(page.locator('#download-filename')).toBeHidden();
+      
+      // Convert again to get download back
+      await page.getByRole('button', { name: 'Convert' }).click();
+      await expect(page.locator('#download-filename')).toBeVisible();
+      
+      // Upload new file -> Download should hide
+      await page.setInputFiles('#file-upload', [
+        { name: 'test2.png', mimeType: 'image/png', buffer: imageBuffer }
+      ]);
+      await expect(page.locator('#download-filename')).toBeHidden();
+      // Preview should be visible
+      await expect(page.locator('img[alt="Input"]')).toBeVisible();
+      
+      // Change Input Format -> Preview should hide (and content reset)
+      await page.selectOption('#input-format', 'image/jpeg');
+      await expect(page.locator('img[alt="Input"]')).toBeHidden();
+      await expect(page.locator('text=No image selected')).toBeVisible();
+    });
+
     await runner.runTest('should work offline', async (page, helper, reporter) => {
       await testOffline(page, '/image-converter/', reporter, runFunctionalTest);
     });
