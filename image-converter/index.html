@@ -230,12 +230,18 @@
                     const extension = file.name.split('.').pop().toLowerCase();
 
                     if (mimeType === 'image/heic' || extension === 'heic') {
-                        if (typeof heic2any !== 'undefined') {
-                            fileObj.sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
-                        } else {
-                            // Fallback to libheif if heic2any is not available
+                        try {
+                            if (typeof heic2any !== 'undefined') {
+                                fileObj.sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
+                            } else {
+                                throw new Error('heic2any not loaded');
+                            }
+                        } catch (e) {
+                            console.warn('heic2any failed, falling back to libheif:', e);
+                            // Fallback to libheif
                             const arrayBuffer = await file.arrayBuffer();
-                            const decoder = new (window.libheif || libheif).HeifDecoder();
+                            const libheifInstance = window.libheif || libheif;
+                            const decoder = new libheifInstance.HeifDecoder();
                             const data = decoder.decode(arrayBuffer);
                             const image = data[0];
                             const width = image.get_width();
@@ -245,14 +251,13 @@
                             canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             const imageData = ctx.createImageData(width, height);
-                            
+
                             await new Promise((resolve, reject) => {
                                 image.display(imageData, (displayData) => {
                                     if (!displayData) {
                                         reject(new Error('HEIC display failed'));
                                         return;
                                     }
-                                    // displayData might be the same as imageData or a new one
                                     for (let i = 0; i < displayData.data.length; i++) {
                                         imageData.data[i] = displayData.data[i];
                                     }
