@@ -1,10 +1,9 @@
 import { TestRunner } from '../../test-helpers/test-framework.mjs';
 import { expect } from '@playwright/test';
-import { testOffline } from '../../test-helpers/offline.mjs';
 
 const runner = new TestRunner('json-to-csv');
 
-const runFunctionalTest = async (page) => {
+export const runFunctionalTest = async (page) => {
   const jsonInput = '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]';
   const expectedCsv = 'name,age\nJohn,30\nJane,25\n';
 
@@ -51,9 +50,6 @@ const runFunctionalTest = async (page) => {
       expect(alertText).toContain('Unexpected token');
     });
 
-    await runner.runTest('should work offline', async (page, helper, reporter) => {
-      await testOffline(page, '/json-to-csv/', reporter, runFunctionalTest);
-    });
 
   } catch (error) {
     console.error('Test suite failed:', error);

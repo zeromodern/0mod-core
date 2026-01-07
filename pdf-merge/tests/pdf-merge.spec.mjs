@@ -1,11 +1,10 @@
 import { TestRunner } from '../../test-helpers/test-framework.mjs';
 import { expect } from '@playwright/test';
 import { Buffer } from 'buffer';
-import { testOffline } from '../../test-helpers/offline.mjs';
 
 const runner = new TestRunner('pdf-merge');
 
-const runFunctionalTest = async (page) => {
+export const runFunctionalTest = async (page) => {
   // Create dummy PDF buffers for testing
   const pdfBuffer = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 0 >>\nstream\nendstream\nendobj\ntrailer\n<< /Root 1 0 R /Size 5 >>\n%%EOF');
 
@@ -56,9 +55,6 @@ const runFunctionalTest = async (page) => {
       await runFunctionalTest(page);
     });
 
-    await runner.runTest('should work offline', async (page, helper, reporter) => {
-      await testOffline(page, '/pdf-merge/', reporter, runFunctionalTest);
-    });
 
   } catch (error) {
     console.error('Test suite failed:', error);
