@@ -150,7 +150,16 @@
                                 const heifImage = new libheif.HeifImage(canvas.width, canvas.height, libheif.HeifColorspace.rgb, libheif.HeifChroma.interleaved_24bit);
                                 heifImage.add_plane(libheif.HeifChannel.interleaved, canvas.width, canvas.height, 24);
                                 const plane = heifImage.get_plane(libheif.HeifChannel.interleaved);
-                                plane.data.set(imageData.data.filter((_, i) => (i + 1) % 4 !== 0)); // Remove alpha for simple RGB HEIF
+                                
+                                // Correctly handle the data copy for libheif-js
+                                const data = imageData.data;
+                                const rgbData = new Uint8Array(canvas.width * canvas.height * 3);
+                                for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+                                    rgbData[j] = data[i];
+                                    rgbData[j+1] = data[i+1];
+                                    rgbData[j+2] = data[i+2];
+                                }
+                                plane.data.set(rgbData);
 
                                 const encoded = encoder.encode(heifImage);
                                 resolve(new Blob([encoded], { type: 'image/heic' }));
@@ -230,8 +239,14 @@
                             canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             const imageData = ctx.createImageData(width, height);
-                            await new Promise((resolve) => {
+                            
+                            await new Promise((resolve, reject) => {
                                 image.display(imageData, (displayData) => {
+                                    if (!displayData) {
+                                        reject(new Error('HEIC display failed'));
+                                        return;
+                                    }
+                                    // displayData might be the same as imageData or a new one
                                     for (let i = 0; i < displayData.data.length; i++) {
                                         imageData.data[i] = displayData.data[i];
                                     }
