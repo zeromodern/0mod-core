@@ -7,6 +7,12 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.17.1/libheif-wasm/libheif-bundle.js"></script>
+    <script>
+        // Ensure libheif is properly initialized
+        if (typeof libheif === 'undefined' && typeof window.libheif !== 'undefined') {
+            window.libheif = window.libheif;
+        }
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
@@ -141,15 +147,15 @@
                         // Use HEIC encoder
                         try {
                             if (typeof libheif !== 'undefined') {
-                                const decoder = new libheif.HeifDecoder();
-                                const encoder = new libheif.HeifEncoder();
+                                const decoder = new (window.libheif || libheif).HeifDecoder();
+                                const encoder = new (window.libheif || libheif).HeifEncoder();
                                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                                 
                                 // libheif-js encoding is a bit complex, usually it's better to use a dedicated library
                                 // but if we must use libheif-js:
-                                const heifImage = new libheif.HeifImage(canvas.width, canvas.height, libheif.HeifColorspace.rgb, libheif.HeifChroma.interleaved_24bit);
-                                heifImage.add_plane(libheif.HeifChannel.interleaved, canvas.width, canvas.height, 24);
-                                const plane = heifImage.get_plane(libheif.HeifChannel.interleaved);
+                                const heifImage = new (window.libheif || libheif).HeifImage(canvas.width, canvas.height, (window.libheif || libheif).HeifColorspace.rgb, (window.libheif || libheif).HeifChroma.interleaved_24bit);
+                                heifImage.add_plane((window.libheif || libheif).HeifChannel.interleaved, canvas.width, canvas.height, 24);
+                                const plane = heifImage.get_plane((window.libheif || libheif).HeifChannel.interleaved);
                                 
                                 // Correctly handle the data copy for libheif-js
                                 const data = imageData.data;
@@ -229,7 +235,7 @@
                         } else {
                             // Fallback to libheif if heic2any is not available
                             const arrayBuffer = await file.arrayBuffer();
-                            const decoder = new libheif.HeifDecoder();
+                            const decoder = new (window.libheif || libheif).HeifDecoder();
                             const data = decoder.decode(arrayBuffer);
                             const image = data[0];
                             const width = image.get_width();
