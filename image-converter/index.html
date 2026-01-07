@@ -185,6 +185,10 @@
             downloadFilename = event.target.value;
         }
 
+        function handleMetadataChange(event) {
+            scrubMetadata = event.target.checked;
+        }
+
         function handleInputFormatChange(event) {
             inputFormat = event.target.value;
             render();
@@ -435,7 +439,7 @@
                 </div>
                 <div class="flex flex-wrap gap-4 mb-6 items-center">
                     <label class="flex items-center space-x-2 cursor-pointer">
-                        <input type="checkbox" checked disabled class="form-checkbox h-5 w-5 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500">
+                        <input type="checkbox" ${scrubMetadata ? 'checked' : ''} onchange="window.handleMetadataChange(event)" class="form-checkbox h-5 w-5 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500">
                         <span class="text-sm text-slate-700 dark:text-slate-300">Remove Metadata (EXIF)</span>
                     </label>
                     ${outputFormat === 'application/pdf' ? zm.ui.Select({
@@ -600,10 +604,7 @@
                         handleFileSelect(fakeEvent);
                     }
                 });
-                // Fix click handler
-                dropzone.addEventListener('click', () => {
-                    document.getElementById('file-upload').click();
-                });
+                // Click handler is already attached via inline onclick in UI Kit
             }
 
             // Sortable list
@@ -649,6 +650,7 @@
         window.handleBookmark = handleBookmark;
         window.removeFile = removeFile;
         window.handleFilenameChange = handleFilenameChange;
+        window.handleMetadataChange = handleMetadataChange;
         window.handleReset = handleReset;
 
         // Initialize theme

@@ -5,13 +5,28 @@ const runner = new TestRunner('json-to-csv');
 
 export const runFunctionalTest = async (page) => {
   const jsonInput = '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]';
-  const expectedCsv = 'name,age\nJohn,30\nJane,25\n';
+  const expectedCsv = 'name,age\r\nJohn,30\r\nJane,25\r\n';
 
   await page.locator('#json-input').fill(jsonInput);
   await page.getByRole('button', { name: 'Convert to CSV' }).click();
 
+  // Check for Table View (default)
+  const table = page.locator('table');
+  await expect(table).toBeVisible();
+  
+  // Check headers
+  await expect(page.locator('th').filter({ hasText: 'name' })).toBeVisible();
+  await expect(page.locator('th').filter({ hasText: 'age' })).toBeVisible();
+
+  // Check rows
+  await expect(page.locator('td').filter({ hasText: 'John' })).toBeVisible();
+  await expect(page.locator('td').filter({ hasText: '30' })).toBeVisible();
+
+  // Check Toggle
+  await page.getByRole('button', { name: 'Raw CSV' }).click();
   const outputValue = await page.locator('#csv-output').inputValue();
-  expect(outputValue).toBe(expectedCsv);
+  // Normalize line endings for comparison
+  expect(outputValue.replace(/\r\n/g, '\n')).toBe(expectedCsv.replace(/\r\n/g, '\n'));
 
   const downloadBtn = page.getByRole('button', { name: 'Download' });
   await expect(downloadBtn).toBeVisible();
