@@ -149,16 +149,17 @@ const DownloadSection = ({
   onDownload,
   size = null,
   onReset = null,
+  disabled = false,
   className = ''
 }) => {
   return `
-    <div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-900/50 rounded-xl p-6 ${className}">
+    <div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-900/50 rounded-xl p-6 ${className} ${disabled ? 'opacity-60 pointer-events-none' : ''}">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-lg font-semibold text-emerald-900 dark:text-emerald-100 flex items-center gap-2">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-          Ready to Download
+          ${disabled ? 'Converting...' : 'Ready to Download'}
         </h3>
-        ${onReset ? `
+        ${onReset && !disabled ? `
           <button onclick="${onReset}" class="text-sm text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-medium">
             Convert another
           </button>
@@ -174,7 +175,8 @@ const DownloadSection = ({
               id="${id}-filename"
               value="${filename}"
               oninput="${onFilenameChange}"
-              class="flex-grow px-3 py-2 border border-emerald-200 dark:border-emerald-800 dark:bg-slate-900 dark:text-white rounded-l-md focus:outline-none focus:ring-emerald-500 focus:border-emerald-500"
+              ${disabled ? 'disabled' : ''}
+              class="flex-grow px-3 py-2 border border-emerald-200 dark:border-emerald-800 dark:bg-slate-900 dark:text-white rounded-l-md focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 ${disabled ? 'bg-slate-100 dark:bg-slate-800' : ''}"
               placeholder="Enter filename"
             />
             <span class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-emerald-200 dark:border-emerald-800 bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-sm font-medium select-none">
@@ -185,10 +187,11 @@ const DownloadSection = ({
 
         <div class="w-full md:w-auto flex-shrink-0">
           ${Button({
-            text: `Download ${size ? `<span class="opacity-75 text-xs ml-1">(${size})</span>` : ''}`,
+            text: disabled ? 'Converting...' : `Download ${size ? `<span class="opacity-75 text-xs ml-1">(${size})</span>` : ''}`,
             onClick: onDownload,
             variant: 'success',
-            className: 'w-full md:w-auto h-[42px] flex items-center justify-center'
+            className: 'w-full md:w-auto h-[42px] flex items-center justify-center',
+            disabled: disabled
           })}
         </div>
       </div>

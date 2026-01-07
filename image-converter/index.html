@@ -60,7 +60,7 @@
         let outputFormat = config.output || 'image/jpeg';
         let isConverting = false;
         let scrubMetadata = true;
-        let pdfPageSize = 'original'; // 'original', 'a4', 'letter'
+        let pdfPageSize = 'letter'; // 'original', 'a4', 'letter'
         let sortableInstance = null;
         let downloadFilename = '';
 
@@ -97,7 +97,7 @@
         }
 
         function isFileAccepted(file, accept) {
-            if (!accept || accept === '*') return true;
+            if (!accept || accept === '*' || accept === 'image/*') return true;
             const mimeType = file.type;
             const extension = "." + file.name.split('.').pop().toLowerCase();
             const acceptedTypes = accept.split(',').map(t => t.trim());
@@ -111,6 +111,20 @@
                 }
                 return mimeType === type;
             });
+        }
+
+        function getAcceptString(fmt) {
+            if (fmt === '*') return 'image/*,.heic,.tiff,.tif,.bmp,.gif';
+            const map = {
+                'image/jpeg': 'image/jpeg,.jpg,.jpeg',
+                'image/png': 'image/png,.png',
+                'image/webp': 'image/webp,.webp',
+                'image/heic': '.heic,image/heic',
+                'image/tiff': '.tiff,.tif,image/tiff',
+                'image/bmp': 'image/bmp,.bmp',
+                'image/gif': 'image/gif,.gif'
+            };
+            return map[fmt] || fmt;
         }
 
         // Conversion logic using Canvas API
@@ -171,7 +185,7 @@
         }
 
         async function addFiles(newFiles) {
-            const acceptedFiles = newFiles.filter(file => isFileAccepted(file, inputFormat === '*' ? 'image/*' : inputFormat));
+            const acceptedFiles = newFiles.filter(file => isFileAccepted(file, getAcceptString(inputFormat)));
             
             for (const file of acceptedFiles) {
                 const id = generateId();
@@ -510,9 +524,9 @@
             const uploadArea = zm.ui.FileUpload({
                 id: 'file-upload',
                 label: 'Upload Images',
-                accept: inputFormat === '*' ? 'image/*' : inputFormat,
+                accept: getAcceptString(inputFormat),
                 multiple: true,
-                fileTypeLabel: 'Image files'
+                fileTypeLabel: inputFormat === '*' ? 'All supported images' : inputOptions.find(o => o.value === inputFormat)?.label + ' files only'
             });
 
             const fileList = files.length > 0 ? `
@@ -534,7 +548,7 @@
                                 </div>
                                 <div class="flex-1 min-w-0">
                                     <p class="text-sm font-medium text-slate-900 dark:text-white truncate">${file.name}</p>
-                                    <p class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</p>
+                                    <p class="text-xs text-slate-500">${file.size > 1024 * 1024 ? (file.size / (1024 * 1024)).toFixed(2) + ' MB' : (file.size / 1024).toFixed(1) + ' KB'}</p>
                                 </div>
                                 <div class="text-sm">
                                     ${file.status === 'pending' ? '<span class="text-slate-500">Pending</span>' : 
@@ -586,7 +600,8 @@
                     onFilenameChange: 'window.handleFilenameChange(event)',
                     onDownload: 'window.handleDownload()',
                     onReset: 'window.handleReset()',
-                    size: sizeStr
+                    size: sizeStr,
+                    disabled: isConverting
                 });
             } else {
                 actions = `
