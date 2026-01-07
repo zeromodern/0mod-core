@@ -29,6 +29,7 @@
     </script>
     <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <link rel="stylesheet" href="../shared/base.css">
     <style>
         .shadow-soft {
@@ -74,12 +75,15 @@
     <script src="../shared/icons.js"></script>
     <script>
         const state = {
-            files: [], // Array of { file, thumbnail }
+            files: [], // Array of { id, file, thumbnail }
             isProcessing: false,
             error: null,
             mergedUrl: null,
-            outputFilename: ''
+            outputFilename: '',
+            sortableInstance: null
         };
+
+        const generateId = () => Math.random().toString(36).substr(2, 9);
 
         // Configure PDF.js worker
         function initPdfJs() {
@@ -135,6 +139,26 @@
             `;
 
             setupEventListeners();
+            initSortable();
+        }
+
+        function initSortable() {
+            const list = document.getElementById('file-list');
+            if (list) {
+                state.sortableInstance = new Sortable(list, {
+                    animation: 150,
+                    handle: '.cursor-move',
+                    onEnd: function (evt) {
+                        const oldIndex = evt.oldIndex;
+                        const newIndex = evt.newIndex;
+                        
+                        const movedItem = state.files.splice(oldIndex, 1)[0];
+                        state.files.splice(newIndex, 0, movedItem);
+                        
+                        state.mergedUrl = null;
+                    }
+                });
+            }
         }
 
         function renderFileList() {
@@ -142,10 +166,12 @@
                 return '<p class="text-center text-slate-400 py-8 border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-xl">No files selected yet</p>';
             }
 
-            return state.files.map(({ file, thumbnail }, index) => `
-                <div class="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm group hover:border-emerald-500/50 transition-colors">
+            return state.files.map(({ id, file, thumbnail }, index) => `
+                <div class="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm group hover:border-emerald-500/50 transition-colors" data-id="${id}">
                     <div class="flex items-center overflow-hidden">
-                        <span class="text-slate-300 dark:text-slate-700 mr-4 font-mono text-sm font-bold">${(index + 1).toString().padStart(2, '0')}</span>
+                        <div class="cursor-move text-slate-400 hover:text-slate-600 mr-4 cursor-grab active:cursor-grabbing">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+                        </div>
                         <div class="w-12 h-16 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 mr-4 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-inner">
                             ${thumbnail ? `<img src="${thumbnail}" class="w-full h-full object-cover" />` : `<span class="text-[10px] font-bold text-slate-400">PDF</span>`}
                         </div>
@@ -154,14 +180,8 @@
                             <span class="text-xs text-slate-400 font-medium">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
                         </div>
                     </div>
-                    <div class="flex items-center space-x-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onclick="moveFile(${index}, -1)" class="p-2 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-lg disabled:opacity-0" ${index === 0 ? 'disabled' : ''}>
-                            ${zm.icons.ArrowUp || '↑'}
-                        </button>
-                        <button onclick="moveFile(${index}, 1)" class="p-2 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-lg disabled:opacity-0" ${index === state.files.length - 1 ? 'disabled' : ''}>
-                            ${zm.icons.ArrowDown || '↓'}
-                        </button>
-                        <button onclick="removeFile(${index})" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">
+                    <div class="flex items-center space-x-1 ml-4">
+                        <button onclick="removeFile('${id}')" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">
                             ${zm.icons.Trash || '×'}
                         </button>
                     </div>
@@ -200,7 +220,7 @@
         }
 
         async function handleNewFiles(newFiles) {
-            const fileObjects = newFiles.map(file => ({ file, thumbnail: null }));
+            const fileObjects = newFiles.map(file => ({ id: generateId(), file, thumbnail: null }));
             state.files = [...state.files, ...fileObjects];
             state.mergedUrl = null;
             if (state.files.length > 0 && (!state.outputFilename || state.outputFilename === 'merged')) {
@@ -240,7 +260,10 @@
             return canvas.toDataURL();
         }
 
-        window.removeFile = (index) => {
+        window.removeFile = (id) => {
+            const index = state.files.findIndex(f => f.id === id);
+            if (index === -1) return;
+
             state.files.splice(index, 1);
             state.mergedUrl = null;
             if (state.files.length > 0 && index === 0) {
@@ -258,16 +281,6 @@
             }
         };
 
-        window.moveFile = (index, direction) => {
-            const newIndex = index + direction;
-            if (newIndex >= 0 && newIndex < state.files.length) {
-                const temp = state.files[index];
-                state.files[index] = state.files[newIndex];
-                state.files[newIndex] = temp;
-                state.mergedUrl = null;
-                render();
-            }
-        };
 
         window.handleMerge = async () => {
             if (state.files.length < 2 || state.isProcessing) return;

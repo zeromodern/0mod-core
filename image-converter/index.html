@@ -9,6 +9,8 @@
     <script src="https://unpkg.com/utif"></script>
     <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -44,23 +46,29 @@
 
         // Default config
         const defaultConfig = {
-            mode: 'convert'
+            mode: 'convert',
+            input: '*',
+            output: 'image/jpeg'
         };
 
         // Merge injected config with defaults
         const config = Object.assign({}, defaultConfig, window.APP_CONFIG || {});
 
         // State
-        let inputFile = null;
-        let sourceBlob = null;
-        let outputBlob = null;
-        let outputFilename = '';
+        let files = []; // Array of { id, file, sourceBlob, status, outputBlob, outputFilename, thumbnail }
         let inputFormat = config.input || '*';
         let outputFormat = config.output || 'image/jpeg';
         let isConverting = false;
+        let scrubMetadata = true;
+        let pdfPageSize = 'original'; // 'original', 'a4', 'letter'
+        let sortableInstance = null;
+        let downloadFilename = '';
+
+        // Utils
+        const generateId = () => Math.random().toString(36).substr(2, 9);
 
         // Conversion logic using Canvas API
-        async function convertImage(blob, format) {
+        async function convertImage(blob, format, pageSize) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 img.onload = async () => {
@@ -75,17 +83,22 @@
                         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                         try {
                             // Assuming libheif.encode is available
-                            const heicBlob = await libheif.encode(imageData);
-                            resolve(heicBlob);
+                            if (typeof libheif !== 'undefined' && libheif.encode) {
+                                const heicBlob = await libheif.encode(imageData);
+                                resolve(heicBlob);
+                            } else {
+                                reject(new Error('HEIC encoding not supported in this browser yet.'));
+                            }
                         } catch (err) {
                             reject(err);
                         }
+                    } else if (format === 'application/pdf') {
+                        // PDF handling is done in bulk for merge, but for single file conversion logic:
+                        // We return the canvas/image data to be used by the PDF generator
+                        resolve({ type: 'canvas', canvas: canvas, width: img.width, height: img.height });
                     } else {
                         // Handle JPEG transparency (fill white)
                         if (format === 'image/jpeg') {
-                            // Create a temporary canvas to flatten transparency if needed,
-                            // or just fill rect before drawing.
-                            // Simple approach:
                             const compositeCanvas = document.createElement('canvas');
                             compositeCanvas.width = img.width;
                             compositeCanvas.height = img.height;
@@ -93,18 +106,7 @@
                             compositeCtx.fillStyle = '#FFFFFF';
                             compositeCtx.fillRect(0, 0, img.width, img.height);
                             compositeCtx.drawImage(img, 0, 0);
-
                             compositeCanvas.toBlob(resolve, format, 0.9);
-                        } else if (format === 'application/pdf') {
-                            const { jsPDF } = window.jspdf;
-                            const doc = new jsPDF({
-                                orientation: canvas.width > canvas.height ? 'l' : 'p',
-                                unit: 'px',
-                                format: [canvas.width, canvas.height]
-                            });
-                            doc.addImage(canvas, 'JPEG', 0, 0, canvas.width, canvas.height);
-                            const pdfBlob = doc.output('blob');
-                            resolve(pdfBlob);
                         } else {
                             canvas.toBlob(resolve, format, 0.9);
                         }
@@ -117,36 +119,30 @@
 
         // Logic
         async function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) {
-                inputFile = file;
-                outputFilename = file.name.split('.').slice(0, -1).join('.') || 'converted';
-                sourceBlob = null;
-                outputBlob = null;
-                isConverting = false;
+            const newFiles = Array.from(event.target.files);
+            if (newFiles.length === 0) return;
 
-                // Determine format
-                const mimeType = file.type;
-                const extension = file.name.split('.').pop().toLowerCase();
+            for (const file of newFiles) {
+                const id = generateId();
+                const fileObj = {
+                    id,
+                    file,
+                    name: file.name,
+                    size: file.size,
+                    status: 'pending', // pending, converting, done, error
+                    sourceBlob: null,
+                    outputBlob: null,
+                    thumbnail: null
+                };
 
-                if (mimeType === 'image/heic' || extension === 'heic') {
-                    // Process HEIC
-                    try {
-                        isConverting = true;
-                        render();
-                        sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
-                        isConverting = false;
-                    } catch (err) {
-                        alert('Failed to process HEIC file: ' + err.message);
-                        isConverting = false;
-                        render();
-                        return;
-                    }
-                } else if (mimeType === 'image/tiff' || extension === 'tiff' || extension === 'tif') {
-                    // Process TIFF
-                    try {
-                        isConverting = true;
-                        render();
+                // Pre-process for preview
+                try {
+                    const mimeType = file.type;
+                    const extension = file.name.split('.').pop().toLowerCase();
+
+                    if (mimeType === 'image/heic' || extension === 'heic') {
+                        fileObj.sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
+                    } else if (mimeType === 'image/tiff' || extension === 'tiff' || extension === 'tif') {
                         const arrayBuffer = await file.arrayBuffer();
                         const ifds = UTIF.decode(arrayBuffer);
                         const rgba = UTIF.toRGBA8(ifds[0]);
@@ -156,72 +152,225 @@
                         const ctx = canvas.getContext('2d');
                         const imageData = new ImageData(new Uint8ClampedArray(rgba), canvas.width, canvas.height);
                         ctx.putImageData(imageData, 0, 0);
-                        sourceBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                        isConverting = false;
-                    } catch (err) {
-                        alert('Failed to process TIFF file: ' + err.message);
-                        isConverting = false;
-                        render();
-                        return;
+                        fileObj.sourceBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    } else {
+                        fileObj.sourceBlob = file;
                     }
-                } else {
-                    // For other formats, use the file directly
-                    sourceBlob = file;
+                    
+                    fileObj.thumbnail = URL.createObjectURL(fileObj.sourceBlob);
+                } catch (err) {
+                    console.error('Error processing file preview:', err);
+                    fileObj.status = 'error';
                 }
 
-                render();
+                files.push(fileObj);
             }
+
+            render();
+        }
+
+        function removeFile(id) {
+            files = files.filter(f => f.id !== id);
+            render();
+        }
+
+        function handleReset() {
+            files = [];
+            downloadFilename = '';
+            window.mergedPdfBlob = null;
+            render();
+        }
+
+        function handleFilenameChange(event) {
+            downloadFilename = event.target.value;
+        }
+
+        function handleMetadataChange(event) {
+            scrubMetadata = event.target.checked;
         }
 
         function handleInputFormatChange(event) {
             inputFormat = event.target.value;
-            // Reset content on input format change
-            inputFile = null;
-            sourceBlob = null;
-            outputBlob = null;
             render();
         }
 
         function handleOutputFormatChange(event) {
             outputFormat = event.target.value;
-            // Hide download button on output format change until converted again
-            outputBlob = null;
+            // Reset status if format changes
+            files.forEach(f => {
+                if (f.status === 'done') f.status = 'pending';
+                f.outputBlob = null;
+            });
             render();
         }
 
-        function handleConvert() {
-            if (!sourceBlob) {
-                alert('Please select an image file first.');
+        async function handleConvert() {
+            if (files.length === 0) {
+                alert('Please select image files first.');
                 return;
             }
 
             isConverting = true;
             render();
 
-            convertImage(sourceBlob, outputFormat).then(blob => {
-                outputBlob = blob;
-                isConverting = false;
-                render();
-            }).catch(err => {
-                console.error('Conversion failed:', err);
-                alert('Conversion failed. Please try again.');
-                isConverting = false;
-                render();
-            });
+            // If output is PDF, we might merge them or create individual PDFs
+            // The requirement says "for PDF pick page size... output zip file with all files if more than one input file"
+            // But usually "Image to PDF" with multiple files implies merging. 
+            // However, if the user wants individual PDFs, they can download zip.
+            // Let's assume if Output is PDF, we merge into ONE PDF if multiple files? 
+            // Or do we create N PDFs?
+            // "make thumbnail list order updated by dragging... also for PDF pick page size" implies merging order matters.
+            // So if output is PDF, we merge.
+            
+            if (outputFormat === 'application/pdf') {
+                try {
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF({
+                        orientation: 'p',
+                        unit: 'mm',
+                        format: pdfPageSize === 'original' ? 'a4' : pdfPageSize // Default to A4 if original, but we'll adjust per page
+                    });
+                    
+                    // Remove initial page if we are going to add pages manually, or just start with one.
+                    // jsPDF starts with one page.
+                    
+                    let firstPage = true;
+
+                    for (let i = 0; i < files.length; i++) {
+                        const file = files[i];
+                        file.status = 'converting';
+                        render();
+
+                        const result = await convertImage(file.sourceBlob, 'application/pdf');
+                        
+                        const imgProps = doc.getImageProperties(result.canvas);
+                        const pdfWidth = doc.internal.pageSize.getWidth();
+                        const pdfHeight = doc.internal.pageSize.getHeight();
+                        
+                        let w, h;
+                        
+                        if (pdfPageSize === 'original') {
+                            // Set page size to image size
+                            // We need to add a page with specific size
+                            const pxToMm = 0.264583;
+                            w = result.width * pxToMm;
+                            h = result.height * pxToMm;
+                            if (!firstPage) doc.addPage([w, h]);
+                            else {
+                                doc.deletePage(1);
+                                doc.addPage([w, h]);
+                            }
+                        } else {
+                            // Fit to page (A4/Letter)
+                            // Calculate ratio
+                            const ratio = Math.min(pdfWidth / imgProps.width, pdfHeight / imgProps.height);
+                            w = imgProps.width * ratio;
+                            h = imgProps.height * ratio;
+                            if (!firstPage) doc.addPage();
+                        }
+
+                        const x = (pdfPageSize !== 'original') ? (pdfWidth - w) / 2 : 0;
+                        const y = (pdfPageSize !== 'original') ? (pdfHeight - h) / 2 : 0;
+
+                        doc.addImage(result.canvas, 'JPEG', x, y, w, h);
+                        
+                        file.status = 'done';
+                        firstPage = false;
+                    }
+
+                    const pdfBlob = doc.output('blob');
+                    // Assign the merged PDF to the first file or a global output?
+                    // To keep it simple, we'll make a "download all" button that downloads this single PDF.
+                    // We can store it in a global variable.
+                    window.mergedPdfBlob = pdfBlob;
+                    
+                } catch (err) {
+                    console.error('PDF Conversion failed:', err);
+                    alert('PDF Conversion failed.');
+                }
+            } else {
+                // Bulk convert to images
+                for (const file of files) {
+                    if (file.status === 'done') continue;
+                    
+                    file.status = 'converting';
+                    render();
+
+                    try {
+                        const blob = await convertImage(file.sourceBlob, outputFormat);
+                        file.outputBlob = blob;
+                        file.status = 'done';
+                    } catch (err) {
+                        console.error(err);
+                        file.status = 'error';
+                    }
+                }
+            }
+
+            // Set default filename
+            if (files.length === 1) {
+                downloadFilename = files[0].name.split('.').slice(0, -1).join('.');
+            } else {
+                downloadFilename = 'converted_images';
+            }
+
+            isConverting = false;
+            render();
         }
 
         function handleDownload() {
-            if (!outputBlob) return;
+            const filename = downloadFilename || 'download';
+            const getExt = (fmt) => {
+                const map = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/bmp': 'bmp', 'image/gif': 'gif', 'application/pdf': 'pdf' };
+                return map[fmt] || fmt.split('/')[1];
+            };
 
-            const url = URL.createObjectURL(outputBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            const ext = outputFormat === 'application/pdf' ? 'pdf' : outputFormat.split('/')[1];
-            a.download = `${outputFilename}.${ext}`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            if (outputFormat === 'application/pdf' && window.mergedPdfBlob) {
+                const url = URL.createObjectURL(window.mergedPdfBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${filename}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                return;
+            }
+
+            const doneFiles = files.filter(f => f.status === 'done' && f.outputBlob);
+            if (doneFiles.length === 0) return;
+
+            if (doneFiles.length === 1) {
+                const file = doneFiles[0];
+                const url = URL.createObjectURL(file.outputBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                const ext = getExt(outputFormat);
+                a.download = `${filename}.${ext}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } else {
+                // Zip
+                const zip = new JSZip();
+                doneFiles.forEach(file => {
+                    const ext = getExt(outputFormat);
+                    const originalName = file.name.split('.').slice(0, -1).join('.');
+                    zip.file(`${originalName}.${ext}`, file.outputBlob);
+                });
+
+                zip.generateAsync({ type: 'blob' }).then(content => {
+                    const url = URL.createObjectURL(content);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${filename}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                });
+            }
         }
 
         function handleShare() {
@@ -265,6 +414,12 @@
                 { value: 'application/pdf', label: 'PDF' }
             ];
 
+            const pdfSizeOptions = [
+                { value: 'original', label: 'Original Size' },
+                { value: 'a4', label: 'A4' },
+                { value: 'letter', label: 'Letter' }
+            ];
+
             const controlsRow = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     ${zm.ui.Select({
@@ -282,43 +437,111 @@
                         onChange: 'window.handleOutputFormatChange(event)'
                     })}
                 </div>
+                <div class="flex flex-wrap gap-4 mb-6 items-center">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" ${scrubMetadata ? 'checked' : ''} onchange="window.handleMetadataChange(event)" class="form-checkbox h-5 w-5 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500">
+                        <span class="text-sm text-slate-700 dark:text-slate-300">Remove Metadata (EXIF)</span>
+                    </label>
+                    ${outputFormat === 'application/pdf' ? zm.ui.Select({
+                        id: 'pdf-size',
+                        label: 'Page Size',
+                        options: pdfSizeOptions,
+                        value: pdfPageSize,
+                        onChange: 'window.pdfPageSize = event.target.value',
+                        className: 'w-48'
+                    }) : ''}
+                </div>
             `;
 
             const uploadArea = zm.ui.FileUpload({
                 id: 'file-upload',
-                label: 'Upload Image',
+                label: 'Upload Images',
                 accept: inputFormat === '*' ? 'image/*' : inputFormat,
-                multiple: false,
-                fileTypeLabel: 'Image files only'
+                multiple: true,
+                fileTypeLabel: 'Image files'
             });
 
-            const previewArea = `
+            const fileList = files.length > 0 ? `
                 <div class="mb-6">
-                    <div class="text-center">
-                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Input Image</h3>
-                        ${sourceBlob ? `<img src="${URL.createObjectURL(sourceBlob)}" alt="Input" class="max-w-full h-auto rounded-lg shadow-soft mx-auto" style="max-height: 200px;">` : '<div class="text-slate-500">No image selected</div>'}
+                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Files (${files.length})</h3>
+                    <div id="file-list" class="space-y-2">
+                        ${files.map(file => `
+                            <div class="bg-white dark:bg-slate-800 p-3 rounded-lg shadow-sm flex items-center gap-4 group" data-id="${file.id}">
+                                <div class="cursor-move text-slate-400 hover:text-slate-600">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+                                </div>
+                                <div class="w-12 h-12 bg-slate-100 dark:bg-slate-700 rounded overflow-hidden flex-shrink-0">
+                                    ${file.thumbnail ? `<img src="${file.thumbnail}" class="w-full h-full object-cover">` : ''}
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm font-medium text-slate-900 dark:text-white truncate">${file.name}</p>
+                                    <p class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</p>
+                                </div>
+                                <div class="text-sm">
+                                    ${file.status === 'pending' ? '<span class="text-slate-500">Pending</span>' : 
+                                      file.status === 'converting' ? '<span class="text-blue-500">Converting...</span>' : 
+                                      file.status === 'done' ? '<span class="text-emerald-500">Done</span>' : 
+                                      '<span class="text-red-500">Error</span>'}
+                                </div>
+                                <button onclick="removeFile('${file.id}')" class="text-slate-400 hover:text-red-500 p-1">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                            </div>
+                        `).join('')}
                     </div>
                 </div>
-            `;
+            ` : '';
 
-            const actions = `
-                <div class="flex gap-4 justify-center mb-6">
-                    ${zm.ui.Button({
-                        text: isConverting ? 'Converting...' : 'Convert',
-                        onClick: 'window.handleConvert()',
-                        variant: 'primary',
-                        className: isConverting ? 'opacity-50 cursor-not-allowed' : '',
-                        disabled: isConverting
-                    })}
-                </div>
-                ${outputBlob ? zm.ui.DownloadSection({
-                    id: 'download',
-                    filename: outputFilename,
-                    extension: outputFormat === 'application/pdf' ? '.pdf' : '.' + outputFormat.split('/')[1],
-                    onFilenameChange: 'window.updateFilename(event)',
-                    onDownload: 'window.handleDownload()'
-                }) : ''}
-            `;
+            const hasResults = files.some(f => f.status === 'done') || (outputFormat === 'application/pdf' && window.mergedPdfBlob);
+            let actions = '';
+
+            if (hasResults) {
+                const getExt = (fmt) => {
+                    const map = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/bmp': 'bmp', 'image/gif': 'gif', 'application/pdf': 'pdf' };
+                    return map[fmt] || fmt.split('/')[1];
+                };
+
+                let extension = '';
+                if (outputFormat === 'application/pdf') {
+                    extension = '.pdf';
+                } else if (files.length > 1) {
+                    extension = '.zip';
+                } else {
+                    extension = '.' + getExt(outputFormat);
+                }
+
+                let totalSize = 0;
+                if (outputFormat === 'application/pdf' && window.mergedPdfBlob) {
+                    totalSize = window.mergedPdfBlob.size;
+                } else {
+                    files.forEach(f => {
+                        if (f.outputBlob) totalSize += f.outputBlob.size;
+                    });
+                }
+                const sizeStr = (totalSize / 1024 / 1024).toFixed(2) + ' MB';
+
+                actions = zm.ui.DownloadSection({
+                    id: 'download-section',
+                    filename: downloadFilename,
+                    extension: extension,
+                    onFilenameChange: 'window.handleFilenameChange(event)',
+                    onDownload: 'window.handleDownload()',
+                    onReset: 'window.handleReset()',
+                    size: sizeStr
+                });
+            } else {
+                actions = `
+                    <div class="flex gap-4 justify-center mb-6">
+                        ${zm.ui.Button({
+                            text: isConverting ? 'Converting...' : 'Convert All',
+                            onClick: 'window.handleConvert()',
+                            variant: 'primary',
+                            className: isConverting || files.length === 0 ? 'opacity-50 cursor-not-allowed' : '',
+                            disabled: isConverting || files.length === 0
+                        })}
+                    </div>
+                `;
+            }
 
             app.innerHTML = `
                 <div class="space-y-8">
@@ -329,7 +552,7 @@
 
                     ${controlsRow}
                     ${uploadArea}
-                    ${previewArea}
+                    ${fileList}
                     ${actions}
 
                     <div class="text-center text-sm text-slate-500 dark:text-slate-400">
@@ -338,7 +561,7 @@
 
                     <footer class="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div class="flex items-center gap-4">
-                            <span class="text-xs font-medium text-slate-400">v1.0.0</span>
+                            <span class="text-xs font-medium text-slate-400">v1.1.0</span>
                             <button onclick="handleShare()" class="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 flex items-center gap-1">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
                                 Share Tool
@@ -361,7 +584,7 @@
                 fileInput.addEventListener('change', handleFileSelect);
             }
 
-            // Drag and drop support
+            // Drag and drop support for upload
             const dropzone = document.getElementById('file-upload-dropzone');
             if (dropzone) {
                 dropzone.addEventListener('dragover', (e) => {
@@ -375,11 +598,44 @@
                 dropzone.addEventListener('drop', (e) => {
                     e.preventDefault();
                     dropzone.classList.remove('border-emerald-500', 'bg-emerald-50', 'dark:bg-emerald-900/20');
-                    const files = e.dataTransfer.files;
-                    if (files.length > 0) {
-                        // Simulate file select
-                        const fakeEvent = { target: { files: [files[0]] } };
+                    const droppedFiles = e.dataTransfer.files;
+                    if (droppedFiles.length > 0) {
+                        const fakeEvent = { target: { files: droppedFiles } };
                         handleFileSelect(fakeEvent);
+                    }
+                });
+                // Click handler is already attached via inline onclick in UI Kit
+            }
+
+            // Sortable list
+            const list = document.getElementById('file-list');
+            if (list && !sortableInstance) {
+                sortableInstance = new Sortable(list, {
+                    animation: 150,
+                    handle: '.cursor-move',
+                    onEnd: function (evt) {
+                        const itemEl = evt.item;
+                        const newIndex = evt.newIndex;
+                        const oldIndex = evt.oldIndex;
+                        
+                        // Reorder files array
+                        const movedItem = files.splice(oldIndex, 1)[0];
+                        files.splice(newIndex, 0, movedItem);
+                    }
+                });
+            } else if (list && sortableInstance) {
+                // Re-init if needed or just let it be? 
+                // Sortable binds to the element. If we re-render, the element is destroyed.
+                // So we need to re-init.
+                sortableInstance = new Sortable(list, {
+                    animation: 150,
+                    handle: '.cursor-move',
+                    onEnd: function (evt) {
+                        const itemEl = evt.item;
+                        const newIndex = evt.newIndex;
+                        const oldIndex = evt.oldIndex;
+                        const movedItem = files.splice(oldIndex, 1)[0];
+                        files.splice(newIndex, 0, movedItem);
                     }
                 });
             }
@@ -390,9 +646,12 @@
         window.handleOutputFormatChange = handleOutputFormatChange;
         window.handleConvert = handleConvert;
         window.handleDownload = handleDownload;
-        window.updateFilename = (event) => { outputFilename = event.target.value; };
         window.handleShare = handleShare;
         window.handleBookmark = handleBookmark;
+        window.removeFile = removeFile;
+        window.handleFilenameChange = handleFilenameChange;
+        window.handleMetadataChange = handleMetadataChange;
+        window.handleReset = handleReset;
 
         // Initialize theme
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');

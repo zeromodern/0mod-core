@@ -2,6 +2,8 @@
 
 A secure, browser-based utility to merge multiple PDF files into a single document.
 
+**Live Demo:** [https://0mod.com/pdf-merge](https://0mod.com/pdf-merge)
+
 ## Features
 
 - **Secure:** All processing happens locally in your browser. Your files are never uploaded to a server.
