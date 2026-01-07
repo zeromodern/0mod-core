@@ -18,10 +18,11 @@ export const runFunctionalTest = async (page) => {
 };
 
 (async () => {
-  try {
-    await runner.setup();
+  if (process.argv[1] === import.meta.filename) {
+    try {
+      await runner.setup();
 
-    await runner.runTest('basic load', async (page, helper, reporter) => {
+      await runner.runTest('basic load', async (page, helper, reporter) => {
       await page.goto('/json-to-csv/');
       await expect(page).toHaveTitle(/JSON to CSV/);
       
@@ -56,5 +57,6 @@ export const runFunctionalTest = async (page) => {
     process.exit(1);
   } finally {
     await runner.teardown();
+  }
   }
 })();

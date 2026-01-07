@@ -2,6 +2,14 @@
 
 A secure, browser-based utility to convert images between different formats.
 
+**Live Demos:**
+- [Convert to PDF](https://0mod.com/convert-to-pdf)
+- [Scrub Image Data (Remove EXIF)](https://0mod.com/scrub-image-data)
+- [JPEG to PNG](https://0mod.com/jpeg-to-png)
+- [HEIC to JPEG](https://0mod.com/heic-to-jpeg)
+- [WEBP to PNG](https://0mod.com/webp-to-png)
+- ...and many more combinations on [0mod.com](https://0mod.com).
+
 ## Features
 
 - **Secure:** All processing happens locally in your browser. Your files are never uploaded to a server.
