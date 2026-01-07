@@ -1,11 +1,10 @@
 import { TestRunner } from '../../test-helpers/test-framework.mjs';
 import { expect } from '@playwright/test';
 import { Buffer } from 'buffer';
-import { testOffline } from '../../test-helpers/offline.mjs';
 
 const runner = new TestRunner('image-converter');
 
-const runFunctionalTest = async (page) => {
+export const runFunctionalTest = async (page) => {
   // Create dummy image buffer (minimal PNG)
   const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -105,9 +104,6 @@ const runFunctionalTest = async (page) => {
       await expect(page.locator('text=No image selected')).toBeVisible();
     });
 
-    await runner.runTest('should work offline', async (page, helper, reporter) => {
-      await testOffline(page, '/image-converter/', reporter, runFunctionalTest);
-    });
 
   } catch (error) {
     console.error('Test suite failed:', error);
