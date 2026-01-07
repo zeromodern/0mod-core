@@ -86,7 +86,82 @@ export async function runFunctionalTest(page) {
         const checkbox = page.getByLabel('Remove Metadata (EXIF)');
         await expect(checkbox).toBeVisible();
         await expect(checkbox).toBeChecked();
-        await expect(checkbox).toBeDisabled(); // It is disabled in my implementation as it's always on for now
+        await expect(checkbox).toBeEnabled();
+      });
+
+      await runner.runTest('clear all button', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+        await page.setInputFiles('#file-upload', [
+          { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
+        ]);
+
+        await expect(page.locator('#file-list')).toBeVisible();
+        const clearAllBtn = page.getByRole('button', { name: 'Clear All' });
+        await expect(clearAllBtn).toBeVisible();
+        await clearAllBtn.click();
+        await expect(page.locator('#file-list')).not.toBeVisible();
+      });
+
+      await runner.runTest('changing from clears files', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+        await page.setInputFiles('#file-upload', [
+          { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
+        ]);
+
+        await expect(page.locator('#file-list')).toBeVisible();
+        await page.selectOption('#input-format', 'image/jpeg');
+        await expect(page.locator('#file-list')).not.toBeVisible();
+      });
+
+      await runner.runTest('changing to resets conversion status', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+        await page.setInputFiles('#file-upload', [
+          { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
+        ]);
+
+        await page.getByRole('button', { name: 'Convert All' }).click();
+        await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 10000 });
+
+        await page.selectOption('#output-format', 'image/webp');
+        await expect(page.locator('text=Pending').first()).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Convert All' })).toBeVisible();
+      });
+
+      await runner.runTest('changing pdf size resets conversion status', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+        await page.setInputFiles('#file-upload', [
+          { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
+        ]);
+
+        await page.selectOption('#output-format', 'application/pdf');
+        await page.getByRole('button', { name: 'Convert All' }).click();
+        await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 10000 });
+
+        await page.selectOption('#pdf-size', 'a4');
+        await expect(page.locator('text=Pending').first()).toBeVisible();
+      });
+
+      await runner.runTest('changing metadata resets conversion status', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+        await page.setInputFiles('#file-upload', [
+          { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
+        ]);
+
+        await page.getByRole('button', { name: 'Convert All' }).click();
+        await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 10000 });
+
+        await page.getByLabel('Remove Metadata (EXIF)').uncheck();
+        await expect(page.locator('text=Pending').first()).toBeVisible();
       });
 
     } catch (error) {
