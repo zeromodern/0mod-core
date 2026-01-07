@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Image Converter - 0mod</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/heic2any"></script>
-    <script src="https://unpkg.com/utif"></script>
-    <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.17.1/libheif-wasm/libheif-bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
@@ -140,16 +139,26 @@
 
                     if (format === 'image/heic') {
                         // Use HEIC encoder
-                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                         try {
-                            // Assuming libheif.encode is available
-                            if (typeof libheif !== 'undefined' && libheif.encode) {
-                                const heicBlob = await libheif.encode(imageData);
-                                resolve(heicBlob);
+                            if (typeof libheif !== 'undefined') {
+                                const decoder = new libheif.HeifDecoder();
+                                const encoder = new libheif.HeifEncoder();
+                                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                
+                                // libheif-js encoding is a bit complex, usually it's better to use a dedicated library
+                                // but if we must use libheif-js:
+                                const heifImage = new libheif.HeifImage(canvas.width, canvas.height, libheif.HeifColorspace.rgb, libheif.HeifChroma.interleaved_24bit);
+                                heifImage.add_plane(libheif.HeifChannel.interleaved, canvas.width, canvas.height, 24);
+                                const plane = heifImage.get_plane(libheif.HeifChannel.interleaved);
+                                plane.data.set(imageData.data.filter((_, i) => (i + 1) % 4 !== 0)); // Remove alpha for simple RGB HEIF
+
+                                const encoded = encoder.encode(heifImage);
+                                resolve(new Blob([encoded], { type: 'image/heic' }));
                             } else {
                                 reject(new Error('HEIC encoding not supported in this browser yet.'));
                             }
                         } catch (err) {
+                            console.error('HEIC encoding error:', err);
                             reject(err);
                         }
                     } else if (format === 'application/pdf') {
@@ -206,7 +215,32 @@
                     const extension = file.name.split('.').pop().toLowerCase();
 
                     if (mimeType === 'image/heic' || extension === 'heic') {
-                        fileObj.sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
+                        if (typeof heic2any !== 'undefined') {
+                            fileObj.sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
+                        } else {
+                            // Fallback to libheif if heic2any is not available
+                            const arrayBuffer = await file.arrayBuffer();
+                            const decoder = new libheif.HeifDecoder();
+                            const data = decoder.decode(arrayBuffer);
+                            const image = data[0];
+                            const width = image.get_width();
+                            const height = image.get_height();
+                            const canvas = document.createElement('canvas');
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            const imageData = ctx.createImageData(width, height);
+                            await new Promise((resolve) => {
+                                image.display(imageData, (displayData) => {
+                                    for (let i = 0; i < displayData.data.length; i++) {
+                                        imageData.data[i] = displayData.data[i];
+                                    }
+                                    resolve();
+                                });
+                            });
+                            ctx.putImageData(imageData, 0, 0);
+                            fileObj.sourceBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+                        }
                     } else if (mimeType === 'image/tiff' || extension === 'tiff' || extension === 'tif') {
                         const arrayBuffer = await file.arrayBuffer();
                         const ifds = UTIF.decode(arrayBuffer);

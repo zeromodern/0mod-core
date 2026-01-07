@@ -164,6 +164,25 @@ export async function runFunctionalTest(page) {
         await expect(page.locator('text=Pending').first()).toBeVisible();
       });
 
+      await runner.runTest('png to heic conversion', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+        await page.setInputFiles('#file-upload', [
+          { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
+        ]);
+
+        await page.selectOption('#output-format', 'image/heic');
+        await page.getByRole('button', { name: 'Convert All' }).click();
+
+        // Wait for conversion to finish (status done)
+        await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 15000 });
+
+        const downloadBtn = page.getByRole('button', { name: /Download/ });
+        await expect(downloadBtn).toBeVisible();
+      });
+
+
     } catch (error) {
       console.error('Test suite failed:', error);
       process.exit(1);
