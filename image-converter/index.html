@@ -60,12 +60,72 @@
         let outputFormat = config.output || 'image/jpeg';
         let isConverting = false;
         let scrubMetadata = true;
-        let pdfPageSize = 'original'; // 'original', 'a4', 'letter'
+        let pdfPageSize = 'letter'; // 'original', 'a4', 'letter'
         let sortableInstance = null;
         let downloadFilename = '';
 
         // Utils
         const generateId = () => Math.random().toString(36).substr(2, 9);
+
+        async function traverseFileTree(item, path = '') {
+            return new Promise((resolve) => {
+                if (item.isFile) {
+                    item.file((file) => {
+                        resolve([file]);
+                    });
+                } else if (item.isDirectory) {
+                    const dirReader = item.createReader();
+                    let entries = [];
+                    const readEntries = () => {
+                        dirReader.readEntries(async (results) => {
+                            if (results.length) {
+                                for (const entry of results) {
+                                    const nestedFiles = await traverseFileTree(entry, path + item.name + "/");
+                                    entries.push(...nestedFiles);
+                                }
+                                readEntries();
+                            } else {
+                                resolve(entries);
+                            }
+                        });
+                    };
+                    readEntries();
+                } else {
+                    resolve([]);
+                }
+            });
+        }
+
+        function isFileAccepted(file, accept) {
+            if (!accept || accept === '*' || accept === 'image/*') return true;
+            const mimeType = file.type;
+            const extension = "." + file.name.split('.').pop().toLowerCase();
+            const acceptedTypes = accept.split(',').map(t => t.trim());
+            
+            return acceptedTypes.some(type => {
+                if (type.startsWith('.')) {
+                    return extension === type.toLowerCase();
+                }
+                if (type.endsWith('/*')) {
+                    return mimeType.startsWith(type.replace('/*', ''));
+                }
+                return mimeType === type;
+            });
+        }
+
+        function getAcceptString(fmt) {
+            if (fmt === '*') return 'image/*,.heic,.tiff,.tif,.bmp,.gif';
+            const map = {
+                'image/jpeg': 'image/jpeg,.jpg,.jpeg',
+                'image/png': 'image/png,.png',
+                'image/webp': 'image/webp,.webp',
+                'image/heic': '.heic,image/heic',
+                'image/tiff': '.tiff,.tif,image/tiff',
+                'image/bmp': 'image/bmp,.bmp',
+                'image/gif': 'image/gif,.gif'
+            };
+            return map[fmt] || fmt;
+        }
 
         // Conversion logic using Canvas API
         async function convertImage(blob, format, pageSize) {
@@ -119,10 +179,15 @@
 
         // Logic
         async function handleFileSelect(event) {
-            const newFiles = Array.from(event.target.files);
+            const newFiles = Array.from(event.target.files || []);
             if (newFiles.length === 0) return;
+            await addFiles(newFiles);
+        }
 
-            for (const file of newFiles) {
+        async function addFiles(newFiles) {
+            const acceptedFiles = newFiles.filter(file => isFileAccepted(file, getAcceptString(inputFormat)));
+            
+            for (const file of acceptedFiles) {
                 const id = generateId();
                 const fileObj = {
                     id,
@@ -187,21 +252,33 @@
 
         function handleMetadataChange(event) {
             scrubMetadata = event.target.checked;
+            resetConversionStatus();
+            render();
         }
 
         function handleInputFormatChange(event) {
             inputFormat = event.target.value;
-            render();
+            handleReset();
         }
 
         function handleOutputFormatChange(event) {
             outputFormat = event.target.value;
-            // Reset status if format changes
+            resetConversionStatus();
+            render();
+        }
+
+        function handlePdfPageSizeChange(event) {
+            pdfPageSize = event.target.value;
+            resetConversionStatus();
+            render();
+        }
+
+        function resetConversionStatus() {
             files.forEach(f => {
                 if (f.status === 'done') f.status = 'pending';
                 f.outputBlob = null;
             });
-            render();
+            window.mergedPdfBlob = null;
         }
 
         async function handleConvert() {
@@ -213,26 +290,19 @@
             isConverting = true;
             render();
 
-            // If output is PDF, we might merge them or create individual PDFs
-            // The requirement says "for PDF pick page size... output zip file with all files if more than one input file"
-            // But usually "Image to PDF" with multiple files implies merging. 
-            // However, if the user wants individual PDFs, they can download zip.
-            // Let's assume if Output is PDF, we merge into ONE PDF if multiple files? 
-            // Or do we create N PDFs?
-            // "make thumbnail list order updated by dragging... also for PDF pick page size" implies merging order matters.
-            // So if output is PDF, we merge.
-            
             if (outputFormat === 'application/pdf') {
                 try {
                     const { jsPDF } = window.jspdf;
                     const doc = new jsPDF({
                         orientation: 'p',
                         unit: 'mm',
-                        format: pdfPageSize === 'original' ? 'a4' : pdfPageSize // Default to A4 if original, but we'll adjust per page
+                        format: pdfPageSize === 'original' ? 'a4' : pdfPageSize
                     });
                     
-                    // Remove initial page if we are going to add pages manually, or just start with one.
-                    // jsPDF starts with one page.
+                    doc.setProperties({
+                        creator: '0mod.com the app',
+                        producer: '0mod.com the app'
+                    });
                     
                     let firstPage = true;
 
@@ -243,34 +313,32 @@
 
                         const result = await convertImage(file.sourceBlob, 'application/pdf');
                         
-                        const imgProps = doc.getImageProperties(result.canvas);
-                        const pdfWidth = doc.internal.pageSize.getWidth();
-                        const pdfHeight = doc.internal.pageSize.getHeight();
-                        
+                        const pxToMm = 0.264583;
                         let w, h;
+                        let pw, ph;
                         
                         if (pdfPageSize === 'original') {
-                            // Set page size to image size
-                            // We need to add a page with specific size
-                            const pxToMm = 0.264583;
                             w = result.width * pxToMm;
                             h = result.height * pxToMm;
-                            if (!firstPage) doc.addPage([w, h]);
+                            pw = w;
+                            ph = h;
+                            if (!firstPage) doc.addPage([pw, ph]);
                             else {
                                 doc.deletePage(1);
-                                doc.addPage([w, h]);
+                                doc.addPage([pw, ph]);
                             }
                         } else {
-                            // Fit to page (A4/Letter)
-                            // Calculate ratio
-                            const ratio = Math.min(pdfWidth / imgProps.width, pdfHeight / imgProps.height);
+                            pw = doc.internal.pageSize.getWidth();
+                            ph = doc.internal.pageSize.getHeight();
+                            const imgProps = doc.getImageProperties(result.canvas);
+                            const ratio = Math.min(pw / imgProps.width, ph / imgProps.height);
                             w = imgProps.width * ratio;
                             h = imgProps.height * ratio;
                             if (!firstPage) doc.addPage();
                         }
 
-                        const x = (pdfPageSize !== 'original') ? (pdfWidth - w) / 2 : 0;
-                        const y = (pdfPageSize !== 'original') ? (pdfHeight - h) / 2 : 0;
+                        const x = (pw - w) / 2;
+                        const y = (ph - h) / 2;
 
                         doc.addImage(result.canvas, 'JPEG', x, y, w, h);
                         
@@ -279,9 +347,6 @@
                     }
 
                     const pdfBlob = doc.output('blob');
-                    // Assign the merged PDF to the first file or a global output?
-                    // To keep it simple, we'll make a "download all" button that downloads this single PDF.
-                    // We can store it in a global variable.
                     window.mergedPdfBlob = pdfBlob;
                     
                 } catch (err) {
@@ -438,16 +503,19 @@
                     })}
                 </div>
                 <div class="flex flex-wrap gap-4 mb-6 items-center">
-                    <label class="flex items-center space-x-2 cursor-pointer">
-                        <input type="checkbox" ${scrubMetadata ? 'checked' : ''} onchange="window.handleMetadataChange(event)" class="form-checkbox h-5 w-5 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500">
-                        <span class="text-sm text-slate-700 dark:text-slate-300">Remove Metadata (EXIF)</span>
-                    </label>
+                    <div>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" ${scrubMetadata ? 'checked' : ''} onchange="window.handleMetadataChange(event)" class="form-checkbox h-5 w-5 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500">
+                            <span class="text-sm text-slate-700 dark:text-slate-300">Remove Metadata (EXIF)</span>
+                        </label>
+                        <span class="text-[10px] text-slate-500 block ml-7 -mt-1">Removes GPS, camera info, and other sensitive data for better privacy.</span>
+                    </div>
                     ${outputFormat === 'application/pdf' ? zm.ui.Select({
                         id: 'pdf-size',
                         label: 'Page Size',
                         options: pdfSizeOptions,
                         value: pdfPageSize,
-                        onChange: 'window.pdfPageSize = event.target.value',
+                        onChange: 'window.handlePdfPageSizeChange(event)',
                         className: 'w-48'
                     }) : ''}
                 </div>
@@ -456,14 +524,19 @@
             const uploadArea = zm.ui.FileUpload({
                 id: 'file-upload',
                 label: 'Upload Images',
-                accept: inputFormat === '*' ? 'image/*' : inputFormat,
+                accept: getAcceptString(inputFormat),
                 multiple: true,
-                fileTypeLabel: 'Image files'
+                fileTypeLabel: inputFormat === '*' ? 'All supported images' : inputOptions.find(o => o.value === inputFormat)?.label + ' files only'
             });
 
             const fileList = files.length > 0 ? `
                 <div class="mb-6">
-                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Files (${files.length})</h3>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Files (${files.length})</h3>
+                        <button onclick="window.handleReset()" class="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-medium">
+                            Clear All
+                        </button>
+                    </div>
                     <div id="file-list" class="space-y-2">
                         ${files.map(file => `
                             <div class="bg-white dark:bg-slate-800 p-3 rounded-lg shadow-sm flex items-center gap-4 group" data-id="${file.id}">
@@ -475,7 +548,7 @@
                                 </div>
                                 <div class="flex-1 min-w-0">
                                     <p class="text-sm font-medium text-slate-900 dark:text-white truncate">${file.name}</p>
-                                    <p class="text-xs text-slate-500">${(file.size / 1024).toFixed(1)} KB</p>
+                                    <p class="text-xs text-slate-500">${file.size > 1024 * 1024 ? (file.size / (1024 * 1024)).toFixed(2) + ' MB' : (file.size / 1024).toFixed(1) + ' KB'}</p>
                                 </div>
                                 <div class="text-sm">
                                     ${file.status === 'pending' ? '<span class="text-slate-500">Pending</span>' : 
@@ -527,7 +600,8 @@
                     onFilenameChange: 'window.handleFilenameChange(event)',
                     onDownload: 'window.handleDownload()',
                     onReset: 'window.handleReset()',
-                    size: sizeStr
+                    size: sizeStr,
+                    disabled: isConverting
                 });
             } else {
                 actions = `
@@ -595,13 +669,28 @@
                     e.preventDefault();
                     dropzone.classList.remove('border-emerald-500', 'bg-emerald-50', 'dark:bg-emerald-900/20');
                 });
-                dropzone.addEventListener('drop', (e) => {
+                dropzone.addEventListener('drop', async (e) => {
                     e.preventDefault();
                     dropzone.classList.remove('border-emerald-500', 'bg-emerald-50', 'dark:bg-emerald-900/20');
-                    const droppedFiles = e.dataTransfer.files;
-                    if (droppedFiles.length > 0) {
-                        const fakeEvent = { target: { files: droppedFiles } };
-                        handleFileSelect(fakeEvent);
+                    
+                    const items = Array.from(e.dataTransfer.items || []);
+                    if (items.length > 0 && items[0].webkitGetAsEntry) {
+                        let allFiles = [];
+                        for (const item of items) {
+                            const entry = item.webkitGetAsEntry();
+                            if (entry) {
+                                const filesFromEntry = await traverseFileTree(entry);
+                                allFiles.push(...filesFromEntry);
+                            }
+                        }
+                        if (allFiles.length > 0) {
+                            await addFiles(allFiles);
+                        }
+                    } else {
+                        const droppedFiles = Array.from(e.dataTransfer.files || []);
+                        if (droppedFiles.length > 0) {
+                            await addFiles(droppedFiles);
+                        }
                     }
                 });
                 // Click handler is already attached via inline onclick in UI Kit
@@ -644,6 +733,7 @@
         // Global handlers
         window.handleInputFormatChange = handleInputFormatChange;
         window.handleOutputFormatChange = handleOutputFormatChange;
+        window.handlePdfPageSizeChange = handlePdfPageSizeChange;
         window.handleConvert = handleConvert;
         window.handleDownload = handleDownload;
         window.handleShare = handleShare;
