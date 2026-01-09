@@ -117,7 +117,7 @@ const FileUpload = ({ id, label, accept = '*', multiple = false, className = '',
 
 const Select = ({ id, label, options = [], value = '', onChange, className = '' }) => {
   const optionsHtml = options.map(opt =>
-    `<option value="${opt.value}" ${opt.value === value ? 'selected' : ''}>${opt.label}</option>`
+    `<option value="${opt.value}" ${opt.value === value ? 'selected' : ''} ${opt.disabled ? 'disabled' : ''}>${opt.label}</option>`
   ).join('');
 
   const changeAttr = onChange ? `onchange="${onChange}"` : '';

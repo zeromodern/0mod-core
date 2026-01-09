@@ -21,8 +21,9 @@ export async function runFunctionalTest(page) {
   if (process.argv[1] === import.meta.filename) {
     try {
       await runner.setup();
+      let allPassed = true;
 
-      await runner.runTest('basic load', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('basic load', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         await expect(page).toHaveTitle(/Image Converter/);
 
@@ -33,7 +34,7 @@ export async function runFunctionalTest(page) {
         await expect(app).toBeVisible();
       });
 
-      await runner.runTest('bulk conversion and zip', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('bulk conversion and zip', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -57,7 +58,7 @@ export async function runFunctionalTest(page) {
         await expect(downloadBtn).toBeVisible();
       });
 
-      await runner.runTest('image to pdf with page size', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('image to pdf with page size', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -80,7 +81,7 @@ export async function runFunctionalTest(page) {
         await expect(downloadBtn).toBeVisible();
       });
 
-      await runner.runTest('remove exif checkbox', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('remove exif checkbox', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         // Checkbox is inside a label with text "Remove Metadata (EXIF)"
         const checkbox = page.getByLabel('Remove Metadata (EXIF)');
@@ -89,7 +90,7 @@ export async function runFunctionalTest(page) {
         await expect(checkbox).toBeEnabled();
       });
 
-      await runner.runTest('clear all button', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('clear all button', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -104,7 +105,7 @@ export async function runFunctionalTest(page) {
         await expect(page.locator('#file-list')).not.toBeVisible();
       });
 
-      await runner.runTest('changing from clears files', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('changing from clears files', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -117,7 +118,7 @@ export async function runFunctionalTest(page) {
         await expect(page.locator('#file-list')).not.toBeVisible();
       });
 
-      await runner.runTest('changing to resets conversion status', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('changing to resets conversion status', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -133,7 +134,7 @@ export async function runFunctionalTest(page) {
         await expect(page.getByRole('button', { name: 'Convert All' })).toBeVisible();
       });
 
-      await runner.runTest('changing pdf size resets conversion status', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('changing pdf size resets conversion status', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -149,7 +150,7 @@ export async function runFunctionalTest(page) {
         await expect(page.locator('text=Pending').first()).toBeVisible();
       });
 
-      await runner.runTest('changing metadata resets conversion status', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('changing metadata resets conversion status', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -164,7 +165,7 @@ export async function runFunctionalTest(page) {
         await expect(page.locator('text=Pending').first()).toBeVisible();
       });
 
-      await runner.runTest('png to heic conversion', async (page, helper, reporter) => {
+      allPassed &= await runner.runTest('png to heic conversion', async (page, helper, reporter) => {
         await page.goto('/image-converter/');
         const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
@@ -172,17 +173,52 @@ export async function runFunctionalTest(page) {
           { name: 'test1.png', mimeType: 'image/png', buffer: imageBuffer }
         ]);
 
-        await page.selectOption('#output-format', 'image/heic');
-        await page.getByRole('button', { name: 'Convert All' }).click();
+        // Check if HEIC option is enabled
+        const heicOption = page.locator('#output-format option[value="image/heic"]');
+        const isDisabled = await heicOption.evaluate(el => el.disabled);
 
-        // Wait for conversion to finish (status done)
-        await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 15000 });
+        if (isDisabled) {
+            console.log('HEIC encoding not supported in this environment, skipping conversion test.');
+            // Verify it is labeled as Not Supported
+            const label = await heicOption.textContent();
+            expect(label).toContain('(Not Supported)');
+        } else {
+            await page.selectOption('#output-format', 'image/heic');
+            await page.getByRole('button', { name: 'Convert All' }).click();
 
-        const downloadBtn = page.getByRole('button', { name: /Download/ });
-        await expect(downloadBtn).toBeVisible();
+            // Wait for conversion to finish (status done)
+            await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 15000 });
+
+            const downloadBtn = page.getByRole('button', { name: /Download/ });
+            await expect(downloadBtn).toBeVisible();
+        }
       });
 
+      allPassed &= await runner.runTest('heic to jpeg conversion (native support check)', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        
+        // Create a dummy HEIC file (minimal header)
+        // ftyp heic
+        const heicBuffer = Buffer.from('0000001466747970686569630000000068656963', 'hex');
+        
+        await page.setInputFiles('#file-upload', [
+          { name: 'test.heic', mimeType: 'image/heic', buffer: heicBuffer }
+        ]);
 
+        await page.selectOption('#output-format', 'image/jpeg');
+        
+        // It might fail to preview or convert due to invalid heic data or lack of support
+        // We expect to see the file in the list
+        await expect(page.locator('#file-list')).toBeVisible();
+        
+        // We expect "Error" status because the file is invalid or not supported
+        await expect(page.locator('text=Error').first()).toBeVisible({ timeout: 5000 });
+      });
+
+      if (!allPassed) {
+        console.error('Some tests failed.');
+        process.exit(1);
+      }
     } catch (error) {
       console.error('Test suite failed:', error);
       process.exit(1);
