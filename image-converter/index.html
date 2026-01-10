@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Image Converter - 0mod</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/heic2any"></script>
     <script src="https://unpkg.com/utif"></script>
-    <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
@@ -44,6 +42,31 @@
     <script>
         const app = document.getElementById('app');
 
+        // Feature Detection
+        // Check for HEIC write support (async)
+        async function checkHeicWriteSupport() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1;
+            canvas.height = 1;
+            
+            // Check toDataURL first (sync)
+            const dataUrl = canvas.toDataURL('image/heic');
+            if (dataUrl.indexOf('image/heic') !== -1) return true;
+            
+            // Check toBlob (async) - Safari often supports this but not toDataURL for HEIC
+            return new Promise(resolve => {
+                canvas.toBlob(blob => {
+                    resolve(blob && blob.type === 'image/heic');
+                }, 'image/heic');
+            });
+        }
+
+        let heicWriteSupported = false;
+        checkHeicWriteSupport().then(supported => {
+            heicWriteSupported = supported;
+            render();
+        });
+
         // Default config
         const defaultConfig = {
             mode: 'convert',
@@ -61,6 +84,8 @@
         let isConverting = false;
         let scrubMetadata = true;
         let pdfPageSize = 'letter'; // 'original', 'a4', 'letter'
+        let quality = 0.9;
+        let scale = 1.0;
         let sortableInstance = null;
         let downloadFilename = '';
 
@@ -127,54 +152,57 @@
             return map[fmt] || fmt;
         }
 
-        // Conversion logic using Canvas API
-        async function convertImage(blob, format, pageSize) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = async () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
+        // Conversion logic using Native Canvas API Only
+        async function convertImage(blob, format, targetScale, targetQuality) {
+            const img = new Image();
+            const url = URL.createObjectURL(blob);
 
+            try {
+                await new Promise((resolve, reject) => {
+                    img.onload = () => resolve();
+                    img.onerror = () => reject(new Error('Failed to load image. If this is a HEIC file, your browser may not support it.'));
+                    img.src = url;
+                });
+
+                const canvas = document.createElement('canvas');
+                
+                // Apply Scaling
+                const width = Math.floor(img.width * targetScale);
+                const height = Math.floor(img.height * targetScale);
+                
+                canvas.width = width;
+                canvas.height = height;
+                
+                const ctx = canvas.getContext('2d');
+                
+                // Handle transparency for formats that don't support it (JPEG, BMP) by filling white first
+                if (format === 'image/jpeg' || format === 'image/bmp') {
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, width, height);
+                }
+                
+                ctx.drawImage(img, 0, 0, width, height);
+
+                return await new Promise((resolve, reject) => {
                     if (format === 'image/heic') {
-                        // Use HEIC encoder
-                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                        try {
-                            // Assuming libheif.encode is available
-                            if (typeof libheif !== 'undefined' && libheif.encode) {
-                                const heicBlob = await libheif.encode(imageData);
-                                resolve(heicBlob);
-                            } else {
-                                reject(new Error('HEIC encoding not supported in this browser yet.'));
-                            }
-                        } catch (err) {
-                            reject(err);
+                        // Native HEIC encoding check
+                        if (heicWriteSupported) {
+                            canvas.toBlob((blob) => {
+                                if (blob) resolve(blob);
+                                else reject(new Error('Browser failed to encode HEIC natively.'));
+                            }, 'image/heic', targetQuality);
+                        } else {
+                            reject(new Error('HEIC encoding is not supported by this browser.'));
                         }
                     } else if (format === 'application/pdf') {
-                        // PDF handling is done in bulk for merge, but for single file conversion logic:
-                        // We return the canvas/image data to be used by the PDF generator
-                        resolve({ type: 'canvas', canvas: canvas, width: img.width, height: img.height });
+                        resolve({ type: 'canvas', canvas: canvas, width: width, height: height });
                     } else {
-                        // Handle JPEG transparency (fill white)
-                        if (format === 'image/jpeg') {
-                            const compositeCanvas = document.createElement('canvas');
-                            compositeCanvas.width = img.width;
-                            compositeCanvas.height = img.height;
-                            const compositeCtx = compositeCanvas.getContext('2d');
-                            compositeCtx.fillStyle = '#FFFFFF';
-                            compositeCtx.fillRect(0, 0, img.width, img.height);
-                            compositeCtx.drawImage(img, 0, 0);
-                            compositeCanvas.toBlob(resolve, format, 0.9);
-                        } else {
-                            canvas.toBlob(resolve, format, 0.9);
-                        }
+                        canvas.toBlob(resolve, format, targetQuality);
                     }
-                };
-                img.onerror = reject;
-                img.src = URL.createObjectURL(blob);
-            });
+                });
+            } finally {
+                URL.revokeObjectURL(url);
+            }
         }
 
         // Logic
@@ -194,10 +222,11 @@
                     file,
                     name: file.name,
                     size: file.size,
-                    status: 'pending', // pending, converting, done, error
+                    status: 'pending', // pending, converting, done, error, unsuppported
                     sourceBlob: null,
                     outputBlob: null,
-                    thumbnail: null
+                    thumbnail: null,
+                    errorMessage: null
                 };
 
                 // Pre-process for preview
@@ -205,27 +234,28 @@
                     const mimeType = file.type;
                     const extension = file.name.split('.').pop().toLowerCase();
 
-                    if (mimeType === 'image/heic' || extension === 'heic') {
-                        fileObj.sourceBlob = await heic2any({ blob: file, toType: "image/jpeg" });
-                    } else if (mimeType === 'image/tiff' || extension === 'tiff' || extension === 'tif') {
-                        const arrayBuffer = await file.arrayBuffer();
-                        const ifds = UTIF.decode(arrayBuffer);
-                        const rgba = UTIF.toRGBA8(ifds[0]);
-                        const canvas = document.createElement('canvas');
-                        canvas.width = ifds[0].width;
-                        canvas.height = ifds[0].height;
-                        const ctx = canvas.getContext('2d');
-                        const imageData = new ImageData(new Uint8ClampedArray(rgba), canvas.width, canvas.height);
-                        ctx.putImageData(imageData, 0, 0);
-                        fileObj.sourceBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                    } else {
-                        fileObj.sourceBlob = file;
-                    }
+                    // Native WebAPI Handling
+                    fileObj.sourceBlob = file;
+
+                    // Try to generate thumbnail to verify browser support
+                    await new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => resolve();
+                        img.onerror = () => reject(new Error('Format not supported'));
+                        img.src = URL.createObjectURL(fileObj.sourceBlob);
+                    });
                     
                     fileObj.thumbnail = URL.createObjectURL(fileObj.sourceBlob);
+
                 } catch (err) {
                     console.error('Error processing file preview:', err);
                     fileObj.status = 'error';
+                    // Specific messaging for HEIC failures
+                    if (file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic') {
+                         fileObj.errorMessage = "Browser cannot read this HEIC file.";
+                    } else {
+                         fileObj.errorMessage = "Format not supported.";
+                    }
                 }
 
                 files.push(fileObj);
@@ -273,6 +303,18 @@
             render();
         }
 
+        function handleQualityChange(event) {
+            quality = parseFloat(event.target.value);
+            resetConversionStatus();
+            render();
+        }
+
+        function handleScaleChange(event) {
+            scale = parseFloat(event.target.value);
+            resetConversionStatus();
+            render();
+        }
+
         function resetConversionStatus() {
             files.forEach(f => {
                 if (f.status === 'done') f.status = 'pending';
@@ -308,10 +350,14 @@
 
                     for (let i = 0; i < files.length; i++) {
                         const file = files[i];
+                        
+                        // Skip files that failed to load (unsupported)
+                        if (file.status === 'error') continue;
+
                         file.status = 'converting';
                         render();
 
-                        const result = await convertImage(file.sourceBlob, 'application/pdf');
+                        const result = await convertImage(file.sourceBlob, 'application/pdf', scale, quality);
                         
                         const pxToMm = 0.264583;
                         let w, h;
@@ -356,18 +402,21 @@
             } else {
                 // Bulk convert to images
                 for (const file of files) {
-                    if (file.status === 'done') continue;
+                    if (file.status === 'done' || file.status === 'error') continue;
                     
                     file.status = 'converting';
                     render();
 
                     try {
-                        const blob = await convertImage(file.sourceBlob, outputFormat);
+                        const blob = await convertImage(file.sourceBlob, outputFormat, scale, quality);
                         file.outputBlob = blob;
                         file.status = 'done';
                     } catch (err) {
                         console.error(err);
                         file.status = 'error';
+                        if (outputFormat === 'image/heic' && !heicWriteSupported) {
+                            file.errorMessage = "HEIC write unsupported.";
+                        }
                     }
                 }
             }
@@ -473,7 +522,7 @@
                 { value: 'image/jpeg', label: 'JPG' },
                 { value: 'image/png', label: 'PNG' },
                 { value: 'image/webp', label: 'WEBP' },
-                { value: 'image/heic', label: 'HEIC' },
+                { value: 'image/heic', label: heicWriteSupported ? 'HEIC' : 'HEIC (Not Supported)', disabled: !heicWriteSupported },
                 { value: 'image/bmp', label: 'BMP' },
                 { value: 'image/gif', label: 'GIF' },
                 { value: 'application/pdf', label: 'PDF' }
@@ -485,7 +534,48 @@
                 { value: 'letter', label: 'Letter' }
             ];
 
+            const scaleOptions = [
+                { value: '1.0', label: '100% (Original)' },
+                { value: '0.75', label: '75%' },
+                { value: '0.5', label: '50%' },
+                { value: '0.25', label: '25%' }
+            ];
+            
+            const qualityOptions = [
+                { value: '1.0', label: 'Best (100%)' },
+                { value: '0.9', label: 'High (90%)' },
+                { value: '0.8', label: 'Good (80%)' },
+                { value: '0.6', label: 'Medium (60%)' },
+                { value: '0.4', label: 'Low (40%)' }
+            ];
+
+            // Determine if Quality option should be visible
+            // JPEG, WEBP support quality. HEIC technically does if native API supports it. 
+            // PNG, GIF, BMP do not support quality param in toBlob usually.
+            const supportsQuality = ['image/jpeg', 'image/webp', 'image/heic'].includes(outputFormat);
+
+            // Warning message logic
+            let message = '';
+            if ((outputFormat === 'image/heic' && !heicWriteSupported) || files.some(f => f.errorMessage && f.errorMessage.includes('HEIC'))) {
+                message = `
+                    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg p-4 mb-6 text-sm text-blue-800 dark:text-blue-200 flex items-start gap-3">
+                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <div>
+                            <p class="font-semibold">About HEIC Support</p>
+                            <p>This browser does not natively support HEIC. For native HEIC support, try:</p>
+                            <ul class="list-disc list-inside mt-1 ml-1 space-y-1 text-xs opacity-90">
+                                <li>Safari on macOS</li>
+                                <li>Chrome on Android</li>
+                                <li>Safari on iOS (iPad/iPhone)</li>
+                                <li>Chrome on iOS (iPad/iPhone)</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }
+
             const controlsRow = `
+                ${message}
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     ${zm.ui.Select({
                         id: 'input-format',
@@ -502,6 +592,34 @@
                         onChange: 'window.handleOutputFormatChange(event)'
                     })}
                 </div>
+                <div class="mb-6">
+                    <details id="more-options" class="p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/50 dark:border-slate-700/50 rounded-lg">
+                        <summary class="cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-300 select-none">More options</summary>
+                        <div class="mt-3 space-y-3">
+                            ${zm.ui.Select({
+                                id: 'scale',
+                                label: 'Scale',
+                                options: scaleOptions,
+                                value: scale,
+                                onChange: 'window.handleScaleChange(event)'
+                            })}
+                            ${supportsQuality ? zm.ui.Select({
+                                id: 'quality',
+                                label: 'Quality',
+                                options: qualityOptions,
+                                value: quality,
+                                onChange: 'window.handleQualityChange(event)'
+                            }) : outputFormat === 'application/pdf' ? zm.ui.Select({
+                                id: 'pdf-size',
+                                label: 'Page Size',
+                                options: pdfSizeOptions,
+                                value: pdfPageSize,
+                                onChange: 'window.handlePdfPageSizeChange(event)'
+                            }) : ''}
+                        </div>
+                    </details>
+                </div>
+                
                 <div class="flex flex-wrap gap-4 mb-6 items-center">
                     <div>
                         <label class="flex items-center space-x-2 cursor-pointer">
@@ -510,14 +628,6 @@
                         </label>
                         <span class="text-[10px] text-slate-500 block ml-7 -mt-1">Removes GPS, camera info, and other sensitive data for better privacy.</span>
                     </div>
-                    ${outputFormat === 'application/pdf' ? zm.ui.Select({
-                        id: 'pdf-size',
-                        label: 'Page Size',
-                        options: pdfSizeOptions,
-                        value: pdfPageSize,
-                        onChange: 'window.handlePdfPageSizeChange(event)',
-                        className: 'w-48'
-                    }) : ''}
                 </div>
             `;
 
@@ -539,16 +649,17 @@
                     </div>
                     <div id="file-list" class="space-y-2">
                         ${files.map(file => `
-                            <div class="bg-white dark:bg-slate-800 p-3 rounded-lg shadow-sm flex items-center gap-4 group" data-id="${file.id}">
+                            <div class="bg-white dark:bg-slate-800 p-3 rounded-lg shadow-sm flex items-center gap-4 group border ${file.status === 'error' ? 'border-red-200 dark:border-red-900/50' : 'border-transparent'}" data-id="${file.id}">
                                 <div class="cursor-move text-slate-400 hover:text-slate-600">
                                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
                                 </div>
-                                <div class="w-12 h-12 bg-slate-100 dark:bg-slate-700 rounded overflow-hidden flex-shrink-0">
-                                    ${file.thumbnail ? `<img src="${file.thumbnail}" class="w-full h-full object-cover">` : ''}
+                                <div class="w-12 h-12 bg-slate-100 dark:bg-slate-700 rounded overflow-hidden flex-shrink-0 flex items-center justify-center">
+                                    ${file.thumbnail ? `<img src="${file.thumbnail}" class="w-full h-full object-cover">` : '<span class="text-xs text-slate-400">N/A</span>'}
                                 </div>
                                 <div class="flex-1 min-w-0">
                                     <p class="text-sm font-medium text-slate-900 dark:text-white truncate">${file.name}</p>
                                     <p class="text-xs text-slate-500">${file.size > 1024 * 1024 ? (file.size / (1024 * 1024)).toFixed(2) + ' MB' : (file.size / 1024).toFixed(1) + ' KB'}</p>
+                                    ${file.errorMessage ? `<p class="text-xs text-red-500 mt-1">${file.errorMessage}</p>` : ''}
                                 </div>
                                 <div class="text-sm">
                                     ${file.status === 'pending' ? '<span class="text-slate-500">Pending</span>' : 
@@ -632,10 +743,10 @@
                     <div class="text-center text-sm text-slate-500 dark:text-slate-400">
                         <p>100% Client-side processing. Your data never leaves your browser.</p>
                     </div>
-
+            
                     <footer class="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div class="flex items-center gap-4">
-                            <span class="text-xs font-medium text-slate-400">v1.1.0</span>
+                            <span class="text-xs font-medium text-slate-400">v1.3.1</span>
                             <button onclick="handleShare()" class="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 flex items-center gap-1">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
                                 Share Tool
@@ -651,7 +762,16 @@
                     </footer>
                 </div>
             `;
-
+            
+            // Restore more options state
+            const moreOptionsDetails = document.getElementById('more-options');
+            if (moreOptionsDetails) {
+                const savedOpen = localStorage.getItem('image-converter-more-options-open') === 'true';
+                moreOptionsDetails.open = savedOpen;
+                moreOptionsDetails.addEventListener('toggle', () => {
+                    localStorage.setItem('image-converter-more-options-open', moreOptionsDetails.open);
+                });
+            }
             // Attach event listeners
             const fileInput = document.getElementById('file-upload');
             if (fileInput) {
@@ -693,7 +813,6 @@
                         }
                     }
                 });
-                // Click handler is already attached via inline onclick in UI Kit
             }
 
             // Sortable list
@@ -706,16 +825,11 @@
                         const itemEl = evt.item;
                         const newIndex = evt.newIndex;
                         const oldIndex = evt.oldIndex;
-                        
-                        // Reorder files array
                         const movedItem = files.splice(oldIndex, 1)[0];
                         files.splice(newIndex, 0, movedItem);
                     }
                 });
             } else if (list && sortableInstance) {
-                // Re-init if needed or just let it be? 
-                // Sortable binds to the element. If we re-render, the element is destroyed.
-                // So we need to re-init.
                 sortableInstance = new Sortable(list, {
                     animation: 150,
                     handle: '.cursor-move',
@@ -742,6 +856,8 @@
         window.handleFilenameChange = handleFilenameChange;
         window.handleMetadataChange = handleMetadataChange;
         window.handleReset = handleReset;
+        window.handleQualityChange = handleQualityChange;
+        window.handleScaleChange = handleScaleChange;
 
         // Initialize theme
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
