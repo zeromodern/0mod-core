@@ -1,7 +1,10 @@
 import { TestRunner } from '../../test-helpers/test-framework.mjs';
 import { expect } from '@playwright/test';
+import { fileURLToPath } from 'url';
+import { basename } from 'path';
 
-const runner = new TestRunner('json-to-csv');
+const filePath = basename(fileURLToPath(import.meta.url));
+const runner = new TestRunner('json-to-csv', filePath);
 
 export const runFunctionalTest = async (page) => {
   const jsonInput = '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]';

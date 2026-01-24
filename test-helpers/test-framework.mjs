@@ -345,7 +345,9 @@ export class BrowserHelper {
  * Main test runner
  */
 export class TestRunner {
-  constructor(suiteName) {
+  constructor(suiteName, filePath = null) {
+    this.suiteName = suiteName;
+    this.filePath = filePath || suiteName;
     this.reporter = new TestReporter(suiteName);
     this.serverManager = new ServerManager(this.reporter);
     this.browser = null;
@@ -353,6 +355,14 @@ export class TestRunner {
     this.page = null;
     this.browserHelper = null;
     this.startTime = null;
+    this.results = {
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      warnings: 0,
+      failures: [],
+      warningTests: []
+    };
   }
 
   async setup() {
@@ -364,7 +374,10 @@ export class TestRunner {
     const isHeadless = process.env.HEADLESS !== 'false';
     this.reporter.step(`Launching browser (headless: ${isHeadless})`);
     this.browser = await chromium.launch({ headless: isHeadless });
-    this.context = await this.browser.newContext({ baseURL });
+    this.context = await this.browser.newContext({
+      baseURL,
+      serviceWorkers: 'allow'  // Allow service workers for offline testing
+    });
     this.page = await this.context.newPage();
     this.browserHelper = new BrowserHelper(this.page, this.reporter);
     this.reporter.success('Browser launched');
@@ -381,6 +394,14 @@ export class TestRunner {
     this.serverManager.cleanup();
     
     this.reporter.suiteEnd(passed, duration);
+    
+    // Output results as JSON for the test runner to capture
+    const results = this.getResults();
+    console.log('\n' + '='.repeat(80));
+    console.log('TEST_RESULTS_JSON_START');
+    console.log(JSON.stringify(results));
+    console.log('TEST_RESULTS_JSON_END');
+    console.log('='.repeat(80));
   }
 
   async runTest(testName, testFn) {
@@ -395,18 +416,42 @@ export class TestRunner {
         errors.forEach((err, i) => {
           this.reporter.debug(`Console error ${i + 1}`, err);
         });
+        this.results.warnings += errors.length;
+        this.results.warningTests.push({
+          testName,
+          file: this.filePath,
+          errorCount: errors.length
+        });
         // Uncomment to fail tests on console errors:
         // throw new Error(`Test had ${errors.length} console error(s)`);
       }
       
       this.reporter.testEnd(true);
+      this.results.passed++;
       return true;
     } catch (error) {
       this.reporter.testEnd(false);
       this.reporter.error(error.message);
       this.reporter.debug('Stack trace', error.stack);
+      this.results.failed++;
+      this.results.failures.push({
+        testName,
+        error: error.message,
+        file: this.filePath
+      });
       return false;
     }
+  }
+
+  getResults() {
+    return {
+      ...this.results,
+      total: this.results.passed + this.results.failed + this.results.skipped
+    };
+  }
+
+  getFailures() {
+    return this.results.failures;
   }
 }
 
