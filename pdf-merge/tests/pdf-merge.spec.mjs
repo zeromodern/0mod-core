@@ -1,8 +1,11 @@
 import { TestRunner } from '../../test-helpers/test-framework.mjs';
 import { expect } from '@playwright/test';
 import { Buffer } from 'buffer';
+import { fileURLToPath } from 'url';
+import { basename } from 'path';
 
-const runner = new TestRunner('pdf-merge');
+const filePath = basename(fileURLToPath(import.meta.url));
+const runner = new TestRunner('pdf-merge', filePath);
 
 export const runFunctionalTest = async (page) => {
   // Create dummy PDF buffers for testing

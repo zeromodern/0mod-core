@@ -1,8 +1,11 @@
 import { TestRunner } from '../../test-helpers/test-framework.mjs';
 import { expect } from '@playwright/test';
 import { Buffer } from 'buffer';
+import { fileURLToPath } from 'url';
+import { basename } from 'path';
 
-const runner = new TestRunner('image-converter');
+const filePath = basename(fileURLToPath(import.meta.url));
+const runner = new TestRunner('image-converter', filePath);
 
 export async function runFunctionalTest(page) {
   const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -67,6 +70,10 @@ export async function runFunctionalTest(page) {
         ]);
 
         await page.selectOption('#output-format', 'application/pdf');
+        
+        // Expand the "more options" section to reveal #pdf-size
+        const moreOptionsDetails = page.locator('#more-options');
+        await moreOptionsDetails.evaluate(el => el.open = true);
         
         const pageSizeSelect = page.locator('#pdf-size');
         await expect(pageSizeSelect).toBeVisible();
@@ -146,6 +153,10 @@ export async function runFunctionalTest(page) {
         await page.getByRole('button', { name: 'Convert All' }).click();
         await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 10000 });
 
+        // Expand the "more options" section to reveal #pdf-size
+        const moreOptionsDetails = page.locator('#more-options');
+        await moreOptionsDetails.evaluate(el => el.open = true);
+        
         await page.selectOption('#pdf-size', 'a4');
         await expect(page.locator('text=Pending').first()).toBeVisible();
       });
