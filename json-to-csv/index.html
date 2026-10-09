@@ -347,21 +347,21 @@
             const isJsonToCsv = state.mode === 'json-to-csv';
 
             const modeToggle = `
-                <div class="flex items-center justify-between bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl mb-6">
-                    <button onclick="window.setMode('json-to-csv')" class="flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${isJsonToCsv ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'}">
+                <div class="flex items-center justify-between bg-slate-100 dark:bg-slate-950/80 p-1.5 rounded-2xl mb-6 border border-slate-300/80 dark:border-slate-800 shadow-2xs">
+                    <button onclick="window.setMode('json-to-csv')" class="flex-1 py-2.5 px-4 rounded-xl text-sm font-bold transition-all ${isJsonToCsv ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500/30' : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-850'}">
                         JSON → CSV
                     </button>
-                    <button onclick="window.setMode('csv-to-json')" class="flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${!isJsonToCsv ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'}">
+                    <button onclick="window.setMode('csv-to-json')" class="flex-1 py-2.5 px-4 rounded-xl text-sm font-bold transition-all ${!isJsonToCsv ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500/30' : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-850'}">
                         CSV → JSON
                     </button>
                 </div>
             `;
 
             const optionsBar = `
-                <div class="flex flex-wrap items-center justify-between gap-4 mb-4 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
-                    <div class="flex items-center gap-2">
-                        <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Delimiter:</label>
-                        <select onchange="window.setDelimiter(this.value)" class="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm px-3 py-1.5 font-medium focus:ring-emerald-500 focus:border-emerald-500">
+                <div class="flex flex-wrap items-center justify-between gap-4 mb-4 bg-slate-50/90 dark:bg-slate-950/70 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                    <div class="flex items-center gap-2.5">
+                        <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Delimiter:</label>
+                        <select onchange="window.setDelimiter(this.value)" class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg text-sm px-3 py-1.5 font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-2xs">
                             <option value="," ${state.delimiter === ',' ? 'selected' : ''}>Comma ( , )</option>
                             <option value=";" ${state.delimiter === ';' ? 'selected' : ''}>Semicolon ( ; )</option>
                             <option value="&#9;" ${state.delimiter === '\t' ? 'selected' : ''}>Tab ( TSV )</option>
@@ -370,7 +370,7 @@
                     </div>
 
                     <div class="flex items-center gap-2">
-                        <button onclick="window.triggerLoadSample()" class="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1">
+                        <button onclick="window.triggerLoadSample()" class="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1.5 cursor-pointer">
                             <span>✨ Load Sample JSON</span>
                         </button>
                     </div>

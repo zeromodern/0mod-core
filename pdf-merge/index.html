@@ -27,9 +27,9 @@
             }
         }
     </script>
-    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script src="../shared/vendor/pdf-lib.min.js"></script>
+    <script src="../shared/vendor/pdf.min.js"></script>
+    <script src="../shared/vendor/sortable.min.js"></script>
     <link rel="stylesheet" href="../shared/base.css">
     <style>
         .shadow-soft {
@@ -88,7 +88,7 @@
         // Configure PDF.js worker
         function initPdfJs() {
             if (window.pdfjsLib) {
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/vendor/pdf.worker.min.js';
             } else {
                 console.error('pdfjsLib not loaded');
             }
