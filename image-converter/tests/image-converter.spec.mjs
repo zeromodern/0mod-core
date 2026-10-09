@@ -226,6 +226,22 @@ export async function runFunctionalTest(page) {
         await expect(page.locator('text=Error').first()).toBeVisible({ timeout: 5000 });
       });
 
+      allPassed &= await runner.runTest('all format cross-conversion test', async (page, helper, reporter) => {
+        await page.goto('/image-converter/');
+        const imageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+        const formats = ['image/jpeg', 'image/png', 'image/webp', 'image/bmp', 'image/gif'];
+
+        for (const format of formats) {
+            await page.setInputFiles('#file-upload', [
+              { name: 'test.png', mimeType: 'image/png', buffer: imageBuffer }
+            ]);
+            await page.selectOption('#output-format', format);
+            await page.getByRole('button', { name: 'Convert All' }).click();
+            await expect(page.locator('text=Done').first()).toBeVisible({ timeout: 10000 });
+            await page.getByRole('button', { name: 'Clear All' }).click();
+        }
+      });
+
       if (!allPassed) {
         console.error('Some tests failed.');
         process.exit(1);

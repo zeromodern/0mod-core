@@ -27,7 +27,7 @@ export const runFunctionalTest = async (page) => {
 
   // Check Toggle
   await page.getByRole('button', { name: 'Raw CSV' }).click();
-  const outputValue = await page.locator('#csv-output').inputValue();
+  const outputValue = await page.locator('#raw-output').inputValue();
   // Normalize line endings for comparison
   expect(outputValue.replace(/\r\n/g, '\n')).toBe(expectedCsv.replace(/\r\n/g, '\n'));
 

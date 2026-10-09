@@ -28,15 +28,15 @@
         }
     </script>
     <link rel="stylesheet" href="../shared/base.css">
-    <meta name="description" content="Convert JSON data to CSV format instantly in your browser.">
+    <meta name="description" content="Convert JSON data to CSV format instantly in your browser. 100% private, offline-capable, with zero server uploads.">
 </head>
 <body class="bg-brand-gray dark:bg-slate-950 min-h-screen font-sans text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200">
     
     <div id="app" class="max-w-5xl mx-auto px-4 py-12">
-        <header class="flex justify-center items-center mb-12">
+        <header class="flex justify-center items-center mb-8">
             <div class="text-center">
-                <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">JSON to CSV</h1>
-                <p class="text-slate-600 dark:text-slate-400 max-w-md mx-auto">Convert JSON data to CSV format instantly in your browser. Your data never leaves your device.</p>
+                <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-2">JSON to CSV Converter</h1>
+                <p class="text-slate-600 dark:text-slate-400 max-w-md mx-auto">Convert JSON datasets to CSV format instantly in your browser. Your data never leaves your device.</p>
             </div>
         </header>
 
@@ -46,7 +46,7 @@
 
         <footer class="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div class="flex items-center gap-4">
-                <span class="text-xs font-medium text-slate-400">v1.1.0</span>
+                <span class="text-xs font-medium text-slate-400">v1.2.0</span>
                 <button onclick="handleShare()" class="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 flex items-center gap-1">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
                     Share Tool
@@ -67,20 +67,56 @@
     <script>
         // State
         const state = {
+            mode: 'json-to-csv', // 'json-to-csv' or 'csv-to-json'
             jsonInput: '',
+            csvInput: '',
             csvOutput: '',
+            jsonOutput: '',
             tableData: null, // { headers: [], rows: [] }
             error: null,
             filename: 'converted',
             isProcessing: false,
-            viewMode: 'table' // 'table' or 'raw'
+            viewMode: 'table', // 'table' or 'raw'
+            delimiter: ',', // ',' | ';' | '\t' | '|'
+            loadedFileName: null,
+            currentPage: 1,
+            pageSize: 25
         };
 
-        // Logic
+        const sampleJson = [
+            {
+                "id": 101,
+                "name": "Sarah Connor",
+                "email": "sarah@cyberdyne.org",
+                "role": "Lead Engineer",
+                "address": { "city": "Los Angeles", "state": "CA" },
+                "skills": ["JavaScript", "Python", "Security"]
+            },
+            {
+                "id": 102,
+                "name": "John Doe",
+                "email": "john@example.com",
+                "role": "Product Manager",
+                "address": { "city": "Austin", "state": "TX" },
+                "skills": ["Strategy", "Analytics"]
+            },
+            {
+                "id": 103,
+                "name": "Elena Rostova",
+                "email": "elena@techcorp.io",
+                "role": "Data Scientist",
+                "address": { "city": "Seattle", "state": "WA" },
+                "skills": ["Machine Learning", "SQL", "R"]
+            }
+        ];
+
+        // Flatten nested object helper
         function flattenObject(obj, prefix = '') {
             return Object.keys(obj).reduce((acc, k) => {
                 const pre = prefix.length ? prefix + '.' : '';
-                if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+                if (Array.isArray(obj[k])) {
+                    acc[pre + k] = obj[k].map(item => (typeof item === 'object' && item !== null) ? JSON.stringify(item) : item).join('; ');
+                } else if (typeof obj[k] === 'object' && obj[k] !== null) {
                     Object.assign(acc, flattenObject(obj[k], pre + k));
                 } else {
                     acc[pre + k] = obj[k];
@@ -89,10 +125,10 @@
             }, {});
         }
 
-        function processData(input) {
+        // Process JSON -> CSV
+        function processJsonToCsv(input, delimiter = ',') {
             let array = typeof input !== 'object' ? JSON.parse(input) : input;
             
-            // Wrap non-array objects in an array
             if (!Array.isArray(array)) {
                 array = [array];
             }
@@ -101,7 +137,6 @@
                 throw new Error("Input must be a non-empty object or array of objects.");
             }
 
-            // Flatten all objects and collect all unique keys for headers
             const flattenedArray = array.map(obj => {
                 if (typeof obj !== 'object' || obj === null) {
                     return { value: obj };
@@ -115,15 +150,13 @@
             });
 
             const headers = Array.from(allKeys);
-            let csvStr = headers.join(',') + '\r\n';
+            let csvStr = headers.map(h => formatCsvValue(h, delimiter)).join(delimiter) + '\r\n';
             const rows = [];
 
             for (let i = 0; i < flattenedArray.length; i++) {
-                let line = '';
                 const rowData = [];
+                const lineValues = [];
                 for (let j = 0; j < headers.length; j++) {
-                    if (line !== '') line += ',';
-                    
                     let value = flattenedArray[i][headers[j]];
                     if (value === undefined || value === null) {
                         value = '';
@@ -131,47 +164,110 @@
                         value = JSON.stringify(value);
                     }
 
-                    let valueStr = String(value);
-                    // Escape quotes and wrap in quotes if needed
-                    if (valueStr.includes(',') || valueStr.includes('"') || valueStr.includes('\n')) {
-                        valueStr = '"' + valueStr.replace(/"/g, '""') + '"';
-                    }
-                    line += valueStr;
-                    
-                    // For table display, we might want to truncate very long strings or objects
-                    let displayValue = value;
-                    if (typeof value === 'object') displayValue = JSON.stringify(value);
-                    rowData.push(displayValue);
+                    lineValues.push(formatCsvValue(String(value), delimiter));
+                    rowData.push(value);
                 }
-                csvStr += line + '\r\n';
+                csvStr += lineValues.join(delimiter) + '\r\n';
                 rows.push(rowData);
             }
 
             return { headers, rows, csvString: csvStr };
         }
 
+        function formatCsvValue(val, delimiter) {
+            let valueStr = String(val);
+            if (valueStr.includes(delimiter) || valueStr.includes('"') || valueStr.includes('\n') || valueStr.includes('\r')) {
+                valueStr = '"' + valueStr.replace(/"/g, '""') + '"';
+            }
+            return valueStr;
+        }
+
+        // Process CSV -> JSON
+        function processCsvToJson(csvText, delimiter = ',') {
+            const lines = csvText.trim().split(/\r?\n/);
+            if (lines.length < 2) {
+                throw new Error("CSV input must contain at least a header row and one data row.");
+            }
+
+            const parseCsvLine = (line) => {
+                const values = [];
+                let current = '';
+                let inQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    const nextChar = line[i + 1];
+                    if (char === '"') {
+                        if (inQuotes && nextChar === '"') {
+                            current += '"';
+                            i++;
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (char === delimiter && !inQuotes) {
+                        values.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                values.push(current.trim());
+                return values;
+            };
+
+            const headers = parseCsvLine(lines[0]);
+            const rows = [];
+            const resultObjects = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                const values = parseCsvLine(lines[i]);
+                const obj = {};
+                const rowData = [];
+                for (let j = 0; j < headers.length; j++) {
+                    const val = values[j] !== undefined ? values[j] : '';
+                    obj[headers[j]] = val;
+                    rowData.push(val);
+                }
+                resultObjects.push(obj);
+                rows.push(rowData);
+            }
+
+            return {
+                headers,
+                rows,
+                jsonString: JSON.stringify(resultObjects, null, 2),
+                objects: resultObjects
+            };
+        }
+
         function handleConvert() {
-            console.log('handleConvert called');
             state.error = null;
             state.csvOutput = '';
+            state.jsonOutput = '';
             state.tableData = null;
             state.isProcessing = true;
+            state.currentPage = 1;
             render();
 
-            // Small timeout to allow UI to update
             setTimeout(() => {
                 try {
-                    console.log('Processing JSON:', state.jsonInput);
-                    if (!state.jsonInput.trim()) {
-                        throw new Error("Please enter some JSON.");
+                    if (state.mode === 'json-to-csv') {
+                        if (!state.jsonInput.trim()) {
+                            throw new Error("Please enter JSON text or upload a JSON file.");
+                        }
+                        const parsed = JSON.parse(state.jsonInput);
+                        const result = processJsonToCsv(parsed, state.delimiter);
+                        state.csvOutput = result.csvString;
+                        state.tableData = { headers: result.headers, rows: result.rows };
+                    } else {
+                        if (!state.csvInput.trim()) {
+                            throw new Error("Please enter CSV text or upload a CSV file.");
+                        }
+                        const result = processCsvToJson(state.csvInput, state.delimiter);
+                        state.jsonOutput = result.jsonString;
+                        state.tableData = { headers: result.headers, rows: result.rows };
                     }
-                    const parsed = JSON.parse(state.jsonInput);
-                    const result = processData(parsed);
-                    console.log('Result:', result);
-                    state.csvOutput = result.csvString;
-                    state.tableData = { headers: result.headers, rows: result.rows };
                 } catch (e) {
-                    console.error('Error:', e);
                     state.error = e.message;
                 } finally {
                     state.isProcessing = false;
@@ -180,90 +276,204 @@
             }, 50);
         }
 
+        function handleLoadSample() {
+            state.jsonInput = JSON.stringify(sampleJson, null, 2);
+            state.loadedFileName = "sample-dataset.json";
+            state.filename = "sample-converted";
+            handleConvert();
+        }
+
+        function handleFileUpload(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const content = e.target.result;
+                state.loadedFileName = file.name;
+                state.filename = file.name.split('.').slice(0, -1).join('.') + '-converted';
+
+                if (file.name.endsWith('.csv') || file.name.endsWith('.tsv') || state.mode === 'csv-to-json') {
+                    state.csvInput = content;
+                    state.mode = 'csv-to-json';
+                } else {
+                    state.jsonInput = content;
+                    state.mode = 'json-to-csv';
+                }
+                handleConvert();
+            };
+            reader.readAsText(file);
+        }
+
         function handleCopy() {
-            navigator.clipboard.writeText(state.csvOutput);
+            const textToCopy = state.mode === 'json-to-csv' ? state.csvOutput : state.jsonOutput;
+            navigator.clipboard.writeText(textToCopy);
             alert('Copied to clipboard!');
         }
 
         function handleDownload() {
-            const blob = new Blob([state.csvOutput], { type: 'text/csv;charset=utf-8;' });
+            const isCsv = state.mode === 'json-to-csv';
+            const content = isCsv ? state.csvOutput : state.jsonOutput;
+            const mimeType = isCsv ? 'text/csv;charset=utf-8;' : 'application/json;charset=utf-8;';
+            const ext = isCsv ? '.csv' : '.json';
+
+            const blob = new Blob([content], { type: mimeType });
             const link = document.createElement("a");
             const url = URL.createObjectURL(blob);
             link.setAttribute("href", url);
-            link.setAttribute("download", `${state.filename}.csv`);
+            link.setAttribute("download", `${state.filename}${ext}`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
         }
-        
+
         function handleClear() {
-             if (confirm('Clear all data?')) {
+            if (confirm('Clear all data and input?')) {
                 state.jsonInput = '';
+                state.csvInput = '';
                 state.csvOutput = '';
+                state.jsonOutput = '';
+                state.tableData = null;
                 state.error = null;
+                state.loadedFileName = null;
                 state.filename = 'converted';
                 render();
             }
         }
 
-        // Render
+        // Render UI
         function render() {
             const content = document.getElementById('tool-content');
             
-            const inputSection = `
-                <div>
-                    ${zm.ui.TextArea({
-                        id: 'json-input',
-                        label: 'JSON Input',
-                        placeholder: '[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]',
-                        value: state.jsonInput,
-                        rows: 12
-                    })}
-                    <div class="mt-4 flex gap-4">
-                        ${zm.ui.Button({
-                            text: state.isProcessing ? 'Converting...' : 'Convert to CSV',
-                            onClick: 'window.triggerConvert()',
-                            variant: 'primary',
-                            className: 'flex-1'
-                        })}
-                        ${state.jsonInput ? zm.ui.Button({
-                            text: 'Clear',
-                            onClick: 'window.triggerClear()',
-                            variant: 'ghost',
-                            className: ''
-                        }) : ''}
+            const isJsonToCsv = state.mode === 'json-to-csv';
+
+            const modeToggle = `
+                <div class="flex items-center justify-between bg-slate-100 dark:bg-slate-900 p-1.5 rounded-xl mb-6">
+                    <button onclick="window.setMode('json-to-csv')" class="flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${isJsonToCsv ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'}">
+                        JSON → CSV
+                    </button>
+                    <button onclick="window.setMode('csv-to-json')" class="flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${!isJsonToCsv ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'}">
+                        CSV → JSON
+                    </button>
+                </div>
+            `;
+
+            const optionsBar = `
+                <div class="flex flex-wrap items-center justify-between gap-4 mb-4 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Delimiter:</label>
+                        <select onchange="window.setDelimiter(this.value)" class="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm px-3 py-1.5 font-medium focus:ring-emerald-500 focus:border-emerald-500">
+                            <option value="," ${state.delimiter === ',' ? 'selected' : ''}>Comma ( , )</option>
+                            <option value=";" ${state.delimiter === ';' ? 'selected' : ''}>Semicolon ( ; )</option>
+                            <option value="&#9;" ${state.delimiter === '\t' ? 'selected' : ''}>Tab ( TSV )</option>
+                            <option value="|" ${state.delimiter === '|' ? 'selected' : ''}>Pipe ( | )</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <button onclick="window.triggerLoadSample()" class="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1">
+                            <span>✨ Load Sample JSON</span>
+                        </button>
                     </div>
                 </div>
             `;
 
+            const dropzoneHtml = `
+                <div id="dropzone" class="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-6 text-center hover:border-emerald-500 dark:hover:border-emerald-500 transition-colors bg-white dark:bg-slate-900 mb-4 cursor-pointer">
+                    <input type="file" id="file-input" accept=".json,.csv,.tsv,.txt" class="hidden" onchange="window.handleFileSelect(event)">
+                    <label for="file-input" class="cursor-pointer block">
+                        <div class="text-3xl mb-2">📁</div>
+                        <p class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                            ${state.loadedFileName ? `Loaded: <span class="text-emerald-600 dark:text-emerald-400 font-bold">${state.loadedFileName}</span>` : 'Drop JSON or CSV file here, or click to browse'}
+                        </p>
+                        <p class="text-xs text-slate-400 mt-1">Supports .json, .csv, .tsv up to 50MB</p>
+                    </label>
+                </div>
+            `;
+
+            const inputArea = isJsonToCsv ? `
+                <div>
+                    ${zm.ui.TextArea({
+                        id: 'json-input',
+                        label: 'JSON Input',
+                        placeholder: '[{"id": 1, "name": "Alice", "role": "Developer"}, {"id": 2, "name": "Bob", "role": "Designer"}]',
+                        value: state.jsonInput,
+                        rows: 8
+                    })}
+                </div>
+            ` : `
+                <div>
+                    ${zm.ui.TextArea({
+                        id: 'csv-input',
+                        label: 'CSV Input',
+                        placeholder: 'id,name,role\n1,Alice,Developer\n2,Bob,Designer',
+                        value: state.csvInput,
+                        rows: 8
+                    })}
+                </div>
+            `;
+
+            const actionButtons = `
+                <div class="mt-4 flex gap-4">
+                    ${zm.ui.Button({
+                        text: state.isProcessing ? 'Processing...' : (isJsonToCsv ? 'Convert to CSV' : 'Convert to JSON'),
+                        onClick: 'window.triggerConvert()',
+                        variant: 'primary',
+                        className: 'flex-1 py-3 text-base'
+                    })}
+                    ${(state.jsonInput || state.csvInput) ? zm.ui.Button({
+                        text: 'Clear All',
+                        onClick: 'window.triggerClear()',
+                        variant: 'ghost',
+                        className: ''
+                    }) : ''}
+                </div>
+            `;
+
+            // Results View
             let outputContent = '';
-            if (state.csvOutput) {
-                const tableHtml = state.tableData ? `
-                    <div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm mb-6 max-h-[500px]">
+            if (state.tableData && (state.csvOutput || state.jsonOutput)) {
+                const totalRows = state.tableData.rows.length;
+                const totalPages = Math.ceil(totalRows / state.pageSize);
+                const startIndex = (state.currentPage - 1) * state.pageSize;
+                const paginatedRows = state.tableData.rows.slice(startIndex, startIndex + state.pageSize);
+
+                const tableHtml = `
+                    <div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm mb-4 max-h-[500px]">
                         <table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700 relative">
                             <thead class="sticky top-0 z-10">
                                 <tr>
                                     ${state.tableData.headers.map(h =>
-                                        `<th class="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 whitespace-nowrap">${h}</th>`
+                                        `<th class="px-6 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 whitespace-nowrap">${h}</th>`
                                     ).join('')}
                                 </tr>
                             </thead>
-                            <tbody class="bg-white dark:bg-slate-900 divide-y divide-slate-200 dark:divide-slate-700">
-                                ${state.tableData.rows.map(row =>
+                            <tbody class="bg-white dark:bg-slate-900 divide-y divide-slate-200 dark:divide-slate-800">
+                                ${paginatedRows.map(row =>
                                     `<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                        ${row.map(cell => `<td class="px-6 py-4 whitespace-nowrap text-sm text-slate-900 dark:text-slate-300 max-w-xs truncate" title="${String(cell).replace(/"/g, '"')}">${cell}</td>`).join('')}
+                                        ${row.map(cell => `<td class="px-6 py-3.5 whitespace-nowrap text-sm text-slate-800 dark:text-slate-200 max-w-xs truncate" title="${String(cell).replace(/"/g, '&quot;')}">${cell !== null && cell !== undefined ? cell : ''}</td>`).join('')}
                                     </tr>`
                                 ).join('')}
                             </tbody>
                         </table>
                     </div>
-                ` : '';
+                    
+                    ${totalPages > 1 ? `
+                        <div class="flex items-center justify-between text-xs text-slate-500 mb-6">
+                            <span>Showing ${startIndex + 1}–${Math.min(startIndex + state.pageSize, totalRows)} of ${totalRows} rows</span>
+                            <div class="flex gap-2">
+                                <button onclick="window.changePage(-1)" ${state.currentPage === 1 ? 'disabled' : ''} class="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded disabled:opacity-50 font-semibold">Prev</button>
+                                <span class="px-2 py-1 font-bold">Page ${state.currentPage} of ${totalPages}</span>
+                                <button onclick="window.changePage(1)" ${state.currentPage === totalPages ? 'disabled' : ''} class="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded disabled:opacity-50 font-semibold">Next</button>
+                            </div>
+                        </div>
+                    ` : ''}
+                `;
 
+                const rawText = isJsonToCsv ? state.csvOutput : state.jsonOutput;
                 const rawHtml = zm.ui.TextArea({
-                    id: 'csv-output',
-                    label: 'Raw CSV',
-                    value: state.csvOutput,
+                    id: 'raw-output',
+                    label: isJsonToCsv ? 'Raw CSV Result' : 'Raw JSON Result',
+                    value: rawText,
                     rows: 12,
                     className: 'font-mono text-sm'
                 });
@@ -271,18 +481,21 @@
                 outputContent = `
                     <div class="mt-8 pt-8 border-t border-slate-200 dark:border-slate-800">
                         <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-lg font-bold text-slate-900 dark:text-white">Result</h3>
+                            <h3 class="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                <span>Output Preview</span>
+                                <span class="text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold px-2.5 py-0.5 rounded-full">${totalRows} rows</span>
+                            </h3>
                             <div class="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
                                 <button onclick="window.setViewMode('table')" class="px-3 py-1 text-sm font-medium rounded-md transition-colors ${state.viewMode === 'table' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}">Table</button>
-                                <button onclick="window.setViewMode('raw')" class="px-3 py-1 text-sm font-medium rounded-md transition-colors ${state.viewMode === 'raw' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}">Raw CSV</button>
+                                <button onclick="window.setViewMode('raw')" class="px-3 py-1 text-sm font-medium rounded-md transition-colors ${state.viewMode === 'raw' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}">Raw ${isJsonToCsv ? 'CSV' : 'JSON'}</button>
                             </div>
                         </div>
 
                         ${state.viewMode === 'table' ? tableHtml : rawHtml}
                         
-                        <div class="mt-4 mb-8">
+                        <div class="mt-4 mb-6">
                              ${zm.ui.Button({
-                                text: `<div class="flex items-center space-x-2">${zm.icons.Clipboard || '📋'} <span>Copy CSV to Clipboard</span></div>`,
+                                text: `<div class="flex items-center justify-center space-x-2">${zm.icons.Clipboard || '📋'} <span>Copy Output to Clipboard</span></div>`,
                                 onClick: 'window.triggerCopy()',
                                 variant: 'secondary',
                                 className: 'w-full sm:w-auto'
@@ -292,7 +505,7 @@
                         ${zm.ui.DownloadSection({
                             id: 'download',
                             filename: state.filename,
-                            extension: '.csv',
+                            extension: isJsonToCsv ? '.csv' : '.json',
                             onFilenameChange: 'window.updateFilename(event)',
                             onDownload: 'window.triggerDownload()',
                             onReset: 'window.triggerClear()'
@@ -302,28 +515,58 @@
             }
 
             content.innerHTML = `
-                ${state.error ? zm.ui.Alert({ title: 'Error', message: state.error, type: 'error' }) : ''}
-                ${zm.ui.Card({ content: inputSection })}
+                ${state.error ? zm.ui.Alert({ title: 'Conversion Error', message: state.error, type: 'error' }) : ''}
+                ${modeToggle}
+                ${zm.ui.Card({
+                    content: `
+                        ${optionsBar}
+                        ${dropzoneHtml}
+                        ${inputArea}
+                        ${actionButtons}
+                    `
+                })}
                 ${outputContent}
             `;
 
-            // Re-attach listeners
-            const jsonInputEl = document.getElementById('json-input');
-            if (jsonInputEl) {
-                jsonInputEl.addEventListener('input', (e) => {
-                    state.jsonInput = e.target.value;
-                });
+            // Setup input listener
+            const jsonEl = document.getElementById('json-input');
+            if (jsonEl) jsonEl.addEventListener('input', (e) => { state.jsonInput = e.target.value; });
+
+            const csvEl = document.getElementById('csv-input');
+            if (csvEl) csvEl.addEventListener('input', (e) => { state.csvInput = e.target.value; });
+
+            // Setup drag-and-drop
+            const dz = document.getElementById('dropzone');
+            if (dz) {
+                dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('border-emerald-500', 'bg-emerald-50/50'); };
+                dz.ondragleave = () => { dz.classList.remove('border-emerald-500', 'bg-emerald-50/50'); };
+                dz.ondrop = (e) => {
+                    e.preventDefault();
+                    dz.classList.remove('border-emerald-500', 'bg-emerald-50/50');
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleFileUpload(e.dataTransfer.files[0]);
+                    }
+                };
             }
         }
 
-        // Global handlers
+        // Global Handlers
+        window.setMode = (m) => { state.mode = m; render(); };
+        window.setDelimiter = (d) => { state.delimiter = d; if (state.tableData) handleConvert(); else render(); };
         window.triggerConvert = handleConvert;
+        window.triggerLoadSample = handleLoadSample;
         window.triggerCopy = handleCopy;
         window.triggerDownload = handleDownload;
         window.triggerClear = handleClear;
         window.updateFilename = (e) => { state.filename = e.target.value; };
-        window.setViewMode = (mode) => { state.viewMode = mode; render(); };
-        
+        window.setViewMode = (v) => { state.viewMode = v; render(); };
+        window.changePage = (delta) => { state.currentPage += delta; render(); };
+        window.handleFileSelect = (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleFileUpload(e.target.files[0]);
+            }
+        };
+
         window.handleShare = () => {
             if (navigator.share) {
                 navigator.share({

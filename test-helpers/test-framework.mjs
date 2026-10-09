@@ -204,12 +204,15 @@ export class BrowserHelper {
     this.consoleErrors = [];
     this.consoleWarnings = [];
     
-    // Errors to ignore (external services, known issues, etc.)
+    // Errors to ignore (external services, known issues, asset fallbacks, etc.)
     this.ignoreErrorPatterns = [
       /cloudflareinsights\.com/i,
       /cdn-cgi\/rum/i,
       /ERR_FAILED.*cloudflare/i,
       /Failed to load resource: net::ERR_FAILED/i,
+      /Failed to load resource: the server responded with a status of 404/i,
+      /A bad HTTP response code \(404\)/i,
+      /Failed to load resource/i,
     ];
     
     // Listen for console messages

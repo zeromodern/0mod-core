@@ -1,9 +1,9 @@
 {
   "id": "pdf-merge",
-  "title": "PDF Merge",
-  "description": "Merge multiple PDF files into one document securely in your browser.",
-  "keywords": ["pdf", "merge", "combine", "document", "utility"],
-  "version": "1.1.0",
+  "title": "PDF Merge & Combine Tool - Fast Offline PDF Joiner",
+  "description": "Combine and merge multiple PDF files into a single document securely in your browser. Drag-and-drop page ordering, 100% private with zero server uploads.",
+  "keywords": ["pdf merge", "combine pdf", "merge pdf files", "pdf joiner", "combine pdf online free", "private pdf merge", "offline pdf joiner"],
+  "version": "1.1.1",
   "author": "0mod",
   "created": "2024-05-22",
   "theme_color": "#10b981",
