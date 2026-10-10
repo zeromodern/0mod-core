@@ -155,10 +155,11 @@
                     const y = it.transform[5];
                     const h = Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || itemHeight(it, bodyHeight);
                     const w = it.width || (it.str.length * h * 0.55);
-                    const font = (it.fontName || '').toLowerCase();
-                    const isBold = /bold|black|heavy|b\b/i.test(font);
-                    const isItalic = /italic|oblique|it\b/i.test(font);
-                    const isMono = /courier|consolas|mono|menlo|sourcecode/i.test(font);
+                    const fontStyle = (textContent.styles && textContent.styles[it.fontName]) || {};
+                    const font = ((fontStyle.fontFamily || '') + ' ' + (it.fontName || '')).toLowerCase();
+                    const isBold = /bold|black|heavy|b\b/i.test(font) || !!fontStyle.bold;
+                    const isItalic = /italic|oblique|it\b/i.test(font) || !!fontStyle.italic;
+                    const isMono = /courier|consolas|mono|menlo|sourcecode|monospace/i.test(font) || /monospace/i.test(fontStyle.fontFamily || '');
 
                     let linkUrl = null;
                     for (const a of linkAnnotations) {
@@ -342,7 +343,7 @@
                             codeLines.push(processedLines[j].cells[0].text);
                             j++;
                         }
-                        if (codeLines.length >= 2) {
+                        if (codeLines.length >= 1) {
                             pageMarkdowns.push('\n```\n' + codeLines.join('\n') + '\n```\n');
                             totalWords += codeLines.join(' ').split(/\s+/).length;
                             i = j;
@@ -364,11 +365,11 @@
                     const hRatio = currentLine.height / bodyHeight;
                     const bulletMatch = lineText.match(/^[\u2022\u25cf\u25cb\u25e6\-\*]\s*(.+)$/);
                     const numMatch = lineText.match(/^(\d+[\.\)])\s*(.+)$/);
-                    const taskMatch = lineText.match(/^(\[[\sxX]\]|[\u2610\u2611\u2612])\s*(.+)$/);
+                    const taskMatch = lineText.match(/^([\u2022\u25cf\u25cb\u25e6\-\*]\s*)?(\[[\sxX]\]|[\u2610\u2611\u2612])\s*(.+)$/);
 
                     if (taskMatch) {
-                        const isChecked = /[xX\u2611\u2612]/.test(taskMatch[1]);
-                        pageMarkdowns.push(`- [${isChecked ? 'x' : ' '}] ${taskMatch[2].trim()}`);
+                        const isChecked = /[xX\u2611\u2612]/.test(taskMatch[2]);
+                        pageMarkdowns.push(`- [${isChecked ? 'x' : ' '}] ${taskMatch[3].trim()}`);
                     } else if (bulletMatch) {
                         pageMarkdowns.push(`- ${bulletMatch[1].trim()}`);
                     } else if (numMatch) {
@@ -460,7 +461,31 @@
                     continue;
                 }
 
-                // 2. Headings
+                // 2. Fenced code blocks
+                if (line.startsWith('```')) {
+                    const codeLines = [];
+                    i++;
+                    while (i < rawLines.length && !rawLines[i].trim().startsWith('```')) {
+                        codeLines.push(rawLines[i]);
+                        i++;
+                    }
+                    if (i < rawLines.length && rawLines[i].trim().startsWith('```')) {
+                        i++;
+                    }
+                    if (codeLines.length > 0) {
+                        for (const codeLine of codeLines) {
+                            checkPageBreak(6);
+                            doc.setFont('courier', 'normal');
+                            doc.setFontSize(9.5);
+                            doc.text(codeLine.trim() || ' ', margin + 2, y);
+                            y += 6;
+                        }
+                        y += 2;
+                    }
+                    continue;
+                }
+
+                // 3. Headings
                 const h1Match = line.match(/^#\s+(.+)$/);
                 const h2Match = line.match(/^##\s+(.+)$/);
                 const h3Match = line.match(/^###\s+(.+)$/);
@@ -495,7 +520,20 @@
                     continue;
                 }
 
-                // 3. Bullet lists
+                // 4. Task lists
+                const taskMatch = line.match(/^[\-\*]\s+\[([\sxX])\]\s+(.+)$/);
+                if (taskMatch) {
+                    checkPageBreak(6);
+                    doc.setFont('helvetica', 'normal');
+                    doc.setFontSize(10);
+                    const mark = taskMatch[1].toLowerCase() === 'x' ? '[x]' : '[ ]';
+                    doc.text(mark + ' ' + taskMatch[2].trim(), margin + 2, y);
+                    y += 5.5;
+                    i++;
+                    continue;
+                }
+
+                // 5. Bullet lists
                 const bulletMatch = line.match(/^[\-\*]\s+(.+)$/);
                 if (bulletMatch) {
                     checkPageBreak(6);
