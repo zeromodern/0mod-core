@@ -88,6 +88,31 @@
             stats: null
         };
 
+        function escapePipe(str) {
+            return (str || '').replace(/\|/g, '\\|').trim();
+        }
+
+        function formatInlineItem(cell) {
+            let t = (cell.text || '').trim();
+            if (!t) return '';
+            if (cell.linkUrl) {
+                return `[${t}](${cell.linkUrl})`;
+            }
+            if (cell.isMono && t.length < 120 && !t.includes('`')) {
+                return `\`${t}\``;
+            }
+            if (cell.isBold && cell.isItalic && !t.startsWith('*')) {
+                return `***${t}***`;
+            }
+            if (cell.isBold && !t.startsWith('*')) {
+                return `**${t}**`;
+            }
+            if (cell.isItalic && !t.startsWith('*')) {
+                return `*${t}*`;
+            }
+            return t;
+        }
+
         // Structured PDF text-to-Markdown extractor
         async function extractStructuredMarkdown(pdfFile) {
             const arrayBuffer = await pdfFile.arrayBuffer();
@@ -114,73 +139,256 @@
             for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                 const page = await pdf.getPage(pageNum);
                 const textContent = await page.getTextContent();
-                const items = textContent.items.filter(it => it.str && it.str.trim().length > 0);
-                if (items.length === 0) continue;
+                let linkAnnotations = [];
+                try {
+                    const annotations = await page.getAnnotations();
+                    linkAnnotations = (annotations || []).filter(a => a.subtype === 'Link' && (a.url || a.unsafeUrl));
+                } catch (e) {
+                    // Ignore annotations error if any
+                }
 
+                const rawItems = textContent.items.filter(it => it.str && it.str.length > 0);
+                if (rawItems.length === 0) continue;
+
+                const enrichedItems = rawItems.map(it => {
+                    const x = it.transform[4];
+                    const y = it.transform[5];
+                    const h = Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || itemHeight(it, bodyHeight);
+                    const w = it.width || (it.str.length * h * 0.55);
+                    const font = (it.fontName || '').toLowerCase();
+                    const isBold = /bold|black|heavy|b\b/i.test(font);
+                    const isItalic = /italic|oblique|it\b/i.test(font);
+                    const isMono = /courier|consolas|mono|menlo|sourcecode/i.test(font);
+
+                    let linkUrl = null;
+                    for (const a of linkAnnotations) {
+                        if (a.rect && a.rect.length === 4) {
+                            const [minX, minY, maxX, maxY] = a.rect;
+                            if (x + w >= minX - 2 && x <= maxX + 2 && y >= minY - 2 && (y - h) <= maxY + 2) {
+                                linkUrl = a.url || a.unsafeUrl;
+                                break;
+                            }
+                        }
+                    }
+
+                    return {
+                        x, y, w, h,
+                        str: it.str,
+                        isBold,
+                        isItalic,
+                        isMono,
+                        linkUrl
+                    };
+                });
+
+                function itemHeight(it, defaultH) {
+                    return Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || it.height || defaultH;
+                }
+
+                // Group items into horizontal lines based on y-coordinate tolerance
                 const lines = [];
                 const yTolerance = Math.max(3, bodyHeight * 0.35);
 
-                for (const it of items) {
-                    const x = it.transform[4];
-                    const y = it.transform[5];
-                    const h = Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || it.height || bodyHeight;
-                    const font = (it.fontName || '').toLowerCase();
-                    const isBold = font.includes('bold') || font.includes('black') || font.includes('heavy') || font.includes('b');
-
-                    let line = lines.find(l => Math.abs(l.y - y) <= yTolerance);
+                for (const it of enrichedItems) {
+                    if (!it.str.trim()) continue;
+                    let line = lines.find(l => Math.abs(l.y - it.y) <= yTolerance);
                     if (!line) {
-                        line = { y, height: h, items: [], isBold };
+                        line = { y: it.y, height: it.h, items: [] };
                         lines.push(line);
                     } else {
-                        line.height = Math.max(line.height, h);
-                        if (isBold) line.isBold = true;
+                        line.height = Math.max(line.height, it.h);
                     }
-                    line.items.push({ x, str: it.str });
+                    line.items.push(it);
                 }
 
-                // Sort top to bottom
+                // Sort lines top to bottom (PDF y increases upwards)
                 lines.sort((a, b) => b.y - a.y);
 
-                let pageLines = [];
+                // Cluster each line's items into columns/cells based on horizontal spacing
+                const processedLines = [];
+                for (const line of lines) {
+                    line.items.sort((a, b) => a.x - b.x);
+
+                    const cells = [];
+                    let currentCell = null;
+
+                    for (const it of line.items) {
+                        if (!currentCell) {
+                            currentCell = {
+                                startX: it.x,
+                                endX: it.x + it.w,
+                                items: [it],
+                                text: it.str,
+                                isMono: it.isMono,
+                                isBold: it.isBold,
+                                isItalic: it.isItalic,
+                                linkUrl: it.linkUrl
+                            };
+                            cells.push(currentCell);
+                        } else {
+                            const gap = it.x - currentCell.endX;
+                            // Threshold for distinct column separation
+                            const isColumnGap = gap >= Math.max(14, bodyHeight * 1.3);
+
+                            if (isColumnGap) {
+                                currentCell = {
+                                    startX: it.x,
+                                    endX: it.x + it.w,
+                                    items: [it],
+                                    text: it.str,
+                                    isMono: it.isMono,
+                                    isBold: it.isBold,
+                                    isItalic: it.isItalic,
+                                    linkUrl: it.linkUrl
+                                };
+                                cells.push(currentCell);
+                            } else {
+                                const addSpace = gap > 1.5 && !currentCell.text.endsWith(' ') && !it.str.startsWith(' ');
+                                currentCell.text += (addSpace ? ' ' : '') + it.str;
+                                currentCell.endX = Math.max(currentCell.endX, it.x + it.w);
+                                if (!it.isMono) currentCell.isMono = false;
+                                if (it.isBold) currentCell.isBold = true;
+                                if (it.isItalic) currentCell.isItalic = true;
+                                if (it.linkUrl) currentCell.linkUrl = it.linkUrl;
+                                currentCell.items.push(it);
+                            }
+                        }
+                    }
+
+                    for (const cell of cells) {
+                        cell.text = cell.text.trim();
+                        cell.formattedText = formatInlineItem(cell);
+                    }
+
+                    processedLines.push({
+                        y: line.y,
+                        height: line.height,
+                        cells: cells.filter(c => c.text.length > 0)
+                    });
+                }
+
+                // Process blocks: Tables, Code blocks, Headings, Lists, Paragraphs
+                let pageMarkdowns = [];
+                let i = 0;
                 let prevY = null;
                 let prevHeight = bodyHeight;
 
-                for (const line of lines) {
-                    // Sort left to right
-                    line.items.sort((a, b) => a.x - b.x);
-                    let lineText = line.items.map(i => i.str).join(' ').trim();
-                    if (!lineText) continue;
-
-                    totalWords += lineText.split(/\s+/).length;
-
-                    if (prevY !== null && Math.abs(prevY - line.y) > (prevHeight * 2.2)) {
-                        pageLines.push('');
+                while (i < processedLines.length) {
+                    const currentLine = processedLines[i];
+                    if (currentLine.cells.length === 0) {
+                        i++;
+                        continue;
                     }
-                    prevY = line.y;
-                    prevHeight = line.height;
 
-                    const hRatio = line.height / bodyHeight;
+                    // 1. Table Detection: Check if current and subsequent lines form a tabular block
+                    const isCandidateRow = (line) => {
+                        if (!line || line.cells.length < 2) return false;
+                        const firstText = line.cells[0].text;
+                        return !firstText.startsWith('#') && !/^[\u2022\u25cf\u25cb\u25e6\-\*]\s/.test(firstText);
+                    };
+
+                    if (isCandidateRow(currentLine)) {
+                        let tableRows = [currentLine];
+                        let j = i + 1;
+                        while (j < processedLines.length && isCandidateRow(processedLines[j])) {
+                            const rowDist = Math.abs(processedLines[j - 1].y - processedLines[j].y);
+                            if (rowDist > Math.max(48, currentLine.height * 3.8)) break;
+                            tableRows.push(processedLines[j]);
+                            j++;
+                        }
+
+                        // If at least 2 consecutive multi-cell lines align, format as GFM pipe table
+                        if (tableRows.length >= 2) {
+                            const maxCols = Math.max(...tableRows.map(r => r.cells.length));
+                            const tableLines = [];
+
+                            // Header row
+                            const headerCells = tableRows[0].cells.map(c => escapePipe(c.formattedText));
+                            while (headerCells.length < maxCols) headerCells.push('');
+                            tableLines.push('| ' + headerCells.join(' | ') + ' |');
+
+                            // Separator row
+                            const sepRow = Array(maxCols).fill('---');
+                            tableLines.push('| ' + sepRow.join(' | ') + ' |');
+
+                            // Data rows
+                            for (let r = 1; r < tableRows.length; r++) {
+                                const rowCells = tableRows[r].cells.map(c => escapePipe(c.formattedText));
+                                while (rowCells.length < maxCols) rowCells.push('');
+                                tableLines.push('| ' + rowCells.join(' | ') + ' |');
+                            }
+
+                            pageMarkdowns.push('\n' + tableLines.join('\n') + '\n');
+
+                            for (const row of tableRows) {
+                                for (const c of row.cells) {
+                                    totalWords += c.text.split(/\s+/).length;
+                                }
+                            }
+
+                            i = j;
+                            prevY = tableRows[tableRows.length - 1].y;
+                            prevHeight = tableRows[tableRows.length - 1].height;
+                            continue;
+                        }
+                    }
+
+                    // 2. Monospace Code Block Detection
+                    const isCodeLine = currentLine.cells.length === 1 && currentLine.cells[0].isMono;
+                    if (isCodeLine) {
+                        let codeLines = [currentLine.cells[0].text];
+                        let j = i + 1;
+                        while (j < processedLines.length && processedLines[j].cells.length === 1 && processedLines[j].cells[0].isMono) {
+                            codeLines.push(processedLines[j].cells[0].text);
+                            j++;
+                        }
+                        if (codeLines.length >= 2) {
+                            pageMarkdowns.push('\n```\n' + codeLines.join('\n') + '\n```\n');
+                            totalWords += codeLines.join(' ').split(/\s+/).length;
+                            i = j;
+                            continue;
+                        }
+                    }
+
+                    // 3. Regular lines: Headings, Lists, Checkboxes, Paragraphs
+                    const lineText = currentLine.cells.map(c => c.formattedText).join(' ').trim();
+                    const rawLineText = currentLine.cells.map(c => c.text).join(' ').trim();
+                    totalWords += rawLineText.split(/\s+/).length;
+
+                    if (prevY !== null && Math.abs(prevY - currentLine.y) > (prevHeight * 2.2)) {
+                        pageMarkdowns.push('');
+                    }
+                    prevY = currentLine.y;
+                    prevHeight = currentLine.height;
+
+                    const hRatio = currentLine.height / bodyHeight;
                     const bulletMatch = lineText.match(/^[\u2022\u25cf\u25cb\u25e6\-\*]\s*(.+)$/);
                     const numMatch = lineText.match(/^(\d+[\.\)])\s*(.+)$/);
+                    const taskMatch = lineText.match(/^(\[[\sxX]\]|[\u2610\u2611\u2612])\s*(.+)$/);
 
-                    if (bulletMatch) {
-                        pageLines.push(`- ${bulletMatch[1].trim()}`);
+                    if (taskMatch) {
+                        const isChecked = /[xX\u2611\u2612]/.test(taskMatch[1]);
+                        pageMarkdowns.push(`- [${isChecked ? 'x' : ' '}] ${taskMatch[2].trim()}`);
+                    } else if (bulletMatch) {
+                        pageMarkdowns.push(`- ${bulletMatch[1].trim()}`);
                     } else if (numMatch) {
-                        pageLines.push(`${numMatch[1]} ${numMatch[2].trim()}`);
-                    } else if (hRatio >= 1.55 && lineText.length < 120) {
-                        pageLines.push(`\n# ${lineText}\n`);
-                    } else if (hRatio >= 1.25 && lineText.length < 140) {
-                        pageLines.push(`\n## ${lineText}\n`);
-                    } else if (hRatio >= 1.12 && lineText.length < 160) {
-                        pageLines.push(`\n### ${lineText}\n`);
-                    } else if (line.isBold && lineText.length < 100 && !lineText.endsWith('.')) {
-                        pageLines.push(`\n**${lineText}**\n`);
+                        pageMarkdowns.push(`${numMatch[1]} ${numMatch[2].trim()}`);
+                    } else if (hRatio >= 1.55 && rawLineText.length < 120) {
+                        pageMarkdowns.push(`\n# ${rawLineText}\n`);
+                    } else if (hRatio >= 1.25 && rawLineText.length < 140) {
+                        pageMarkdowns.push(`\n## ${rawLineText}\n`);
+                    } else if (hRatio >= 1.12 && rawLineText.length < 160) {
+                        pageMarkdowns.push(`\n### ${rawLineText}\n`);
+                    } else if (currentLine.cells.every(c => c.isBold) && rawLineText.length < 100 && !rawLineText.endsWith('.')) {
+                        pageMarkdowns.push(`\n**${rawLineText}**\n`);
                     } else {
-                        pageLines.push(lineText);
+                        pageMarkdowns.push(lineText);
                     }
+
+                    i++;
                 }
 
-                allPageMarkdowns.push(pageLines.join('\n'));
+                allPageMarkdowns.push(pageMarkdowns.join('\n'));
             }
 
             const rawMd = allPageMarkdowns.join('\n\n---\n\n').replace(/\n{3,}/g, '\n\n').trim();
