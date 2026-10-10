@@ -12,6 +12,7 @@
                 extend: {
                     fontFamily: {
                         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', 'monospace'],
                     },
                     colors: {
                         brand: {
@@ -35,46 +36,185 @@
     <script src="../shared/vendor/turndown.js"></script>
     <script src="../shared/vendor/pdf.min.js"></script>
     <script>
-        // PDF.js worker
+        // PDF.js worker setup
         if (window.pdfjsLib) {
             window.pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/vendor/pdf.worker.min.js';
         }
     </script>
 </head>
 <body class="bg-brand-gray dark:bg-slate-950 min-h-screen font-sans text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200">
-    <div id="app" class="max-w-5xl mx-auto px-4 py-12"></div>
+    <div id="app" class="max-w-5xl mx-auto px-4 py-8 sm:py-12"></div>
 
     <script src="../shared/ui-kit.js"></script>
     <script src="../shared/icons.js"></script>
     <script>
         const app = document.getElementById('app');
 
+        // Detect initial mode from window.APP_CONFIG or URL path
+        function getInitialMode() {
+            if (window.APP_CONFIG && window.APP_CONFIG.from && window.APP_CONFIG.to) {
+                const { from, to } = window.APP_CONFIG;
+                if (from === 'pdf' && to === 'markdown') return 'pdf-to-md';
+                if (from === 'markdown' && to === 'pdf') return 'md-to-pdf';
+                if (from === 'markdown' && (to === 'html' || to === 'rich-text')) return 'md-to-html';
+                if ((from === 'html' || from === 'rich-text') && to === 'markdown') return 'html-to-md';
+            }
+            const path = window.location.pathname.toLowerCase();
+            if (path.includes('pdf-to-md') || path.includes('pdf-to-markdown')) return 'pdf-to-md';
+            if (path.includes('md-to-pdf')) return 'md-to-pdf';
+            if (path.includes('md-to-html') || path.includes('md-to-rich-text')) return 'md-to-html';
+            if (path.includes('html-to-md') || path.includes('rich-text-to-md')) return 'html-to-md';
+            return 'md-to-pdf';
+        }
+
+        const modes = [
+            { id: 'pdf-to-md', label: 'PDF to Markdown (.md)' },
+            { id: 'md-to-pdf', label: 'Markdown to PDF' },
+            { id: 'md-to-html', label: 'Markdown to HTML' },
+            { id: 'html-to-md', label: 'HTML to Markdown' }
+        ];
+
         // State
         let state = {
             isProcessing: false,
-            mode: 'md-to-pdf',
+            mode: getInitialMode(),
             inputText: '',
             outputHtml: '',
-            outputUrl: null,
-            pdfFile: null
+            outputMarkdown: '',
+            outputFileName: '',
+            outputBlobUrl: null,
+            pdfFile: null,
+            previewTab: 'raw', // 'raw' | 'preview'
+            stats: null
         };
 
-        const modes = [
-            { id: 'md-to-pdf', label: 'Markdown to PDF' },
-            { id: 'md-to-html', label: 'Markdown to HTML' },
-            { id: 'html-to-md', label: 'HTML to Markdown' },
-            { id: 'pdf-to-md', label: 'PDF to Markdown' }
-        ];
+        // Structured PDF text-to-Markdown extractor
+        async function extractStructuredMarkdown(pdfFile) {
+            const arrayBuffer = await pdfFile.arrayBuffer();
+            const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            
+            let allPageMarkdowns = [];
+            let totalWords = 0;
+            
+            // Sample font heights across first few pages to detect body text height
+            let sampleHeights = [];
+            for (let pageNum = 1; pageNum <= Math.min(pdf.numPages, 3); pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const textContent = await page.getTextContent();
+                for (const item of textContent.items) {
+                    if (item.str && item.str.trim()) {
+                        const h = Math.abs(item.transform[3]) || Math.abs(item.transform[0]) || item.height || 12;
+                        if (h > 4 && h < 60) sampleHeights.push(Math.round(h));
+                    }
+                }
+            }
+            sampleHeights.sort((a, b) => a - b);
+            const bodyHeight = sampleHeights.length > 0 ? sampleHeights[Math.floor(sampleHeights.length / 2)] : 12;
+
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const textContent = await page.getTextContent();
+                const items = textContent.items.filter(it => it.str && it.str.trim().length > 0);
+                if (items.length === 0) continue;
+
+                const lines = [];
+                const yTolerance = Math.max(3, bodyHeight * 0.35);
+
+                for (const it of items) {
+                    const x = it.transform[4];
+                    const y = it.transform[5];
+                    const h = Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || it.height || bodyHeight;
+                    const font = (it.fontName || '').toLowerCase();
+                    const isBold = font.includes('bold') || font.includes('black') || font.includes('heavy') || font.includes('b');
+
+                    let line = lines.find(l => Math.abs(l.y - y) <= yTolerance);
+                    if (!line) {
+                        line = { y, height: h, items: [], isBold };
+                        lines.push(line);
+                    } else {
+                        line.height = Math.max(line.height, h);
+                        if (isBold) line.isBold = true;
+                    }
+                    line.items.push({ x, str: it.str });
+                }
+
+                // Sort top to bottom
+                lines.sort((a, b) => b.y - a.y);
+
+                let pageLines = [];
+                let prevY = null;
+                let prevHeight = bodyHeight;
+
+                for (const line of lines) {
+                    // Sort left to right
+                    line.items.sort((a, b) => a.x - b.x);
+                    let lineText = line.items.map(i => i.str).join(' ').trim();
+                    if (!lineText) continue;
+
+                    totalWords += lineText.split(/\s+/).length;
+
+                    if (prevY !== null && Math.abs(prevY - line.y) > (prevHeight * 2.2)) {
+                        pageLines.push('');
+                    }
+                    prevY = line.y;
+                    prevHeight = line.height;
+
+                    const hRatio = line.height / bodyHeight;
+                    const bulletMatch = lineText.match(/^[\u2022\u25cf\u25cb\u25e6\-\*]\s*(.+)$/);
+                    const numMatch = lineText.match(/^(\d+[\.\)])\s*(.+)$/);
+
+                    if (bulletMatch) {
+                        pageLines.push(`- ${bulletMatch[1].trim()}`);
+                    } else if (numMatch) {
+                        pageLines.push(`${numMatch[1]} ${numMatch[2].trim()}`);
+                    } else if (hRatio >= 1.55 && lineText.length < 120) {
+                        pageLines.push(`\n# ${lineText}\n`);
+                    } else if (hRatio >= 1.25 && lineText.length < 140) {
+                        pageLines.push(`\n## ${lineText}\n`);
+                    } else if (hRatio >= 1.12 && lineText.length < 160) {
+                        pageLines.push(`\n### ${lineText}\n`);
+                    } else if (line.isBold && lineText.length < 100 && !lineText.endsWith('.')) {
+                        pageLines.push(`\n**${lineText}**\n`);
+                    } else {
+                        pageLines.push(lineText);
+                    }
+                }
+
+                allPageMarkdowns.push(pageLines.join('\n'));
+            }
+
+            const rawMd = allPageMarkdowns.join('\n\n---\n\n').replace(/\n{3,}/g, '\n\n').trim();
+            return { markdown: rawMd, pages: pdf.numPages, words: totalWords };
+        }
 
         // Logic
         async function handleAction() {
+            const inputEl = document.getElementById('main-input');
+            if (inputEl) {
+                state.inputText = inputEl.value;
+            }
             state.isProcessing = true;
-            state.outputUrl = null;
+            if (state.outputBlobUrl) {
+                URL.revokeObjectURL(state.outputBlobUrl);
+                state.outputBlobUrl = null;
+            }
             state.outputHtml = '';
+            state.outputMarkdown = '';
+            state.stats = null;
             render();
 
             try {
-                if (state.mode === 'md-to-pdf') {
+                if (state.mode === 'pdf-to-md') {
+                    if (!state.pdfFile) throw new Error("Please select a PDF file to convert.");
+                    
+                    const result = await extractStructuredMarkdown(state.pdfFile);
+                    state.outputMarkdown = result.markdown;
+                    state.outputFileName = (state.pdfFile.name.replace(/\.[^/.]+$/, '') || 'document') + '.md';
+                    state.outputBlobUrl = URL.createObjectURL(new Blob([result.markdown], { type: 'text/markdown;charset=utf-8' }));
+                    state.outputHtml = marked.parse(result.markdown);
+                    state.stats = { pages: result.pages, words: result.words };
+
+                } else if (state.mode === 'md-to-pdf') {
                     if (!state.inputText.trim()) throw new Error("Please enter some Markdown text.");
                     const htmlContent = marked.parse(state.inputText);
                     
@@ -107,39 +247,36 @@
                             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                         };
                         const pdfBlob = await window.html2pdf().from(container).set(opt).output('blob');
-                        state.outputUrl = URL.createObjectURL(pdfBlob);
+                        state.outputBlobUrl = URL.createObjectURL(pdfBlob);
+                        state.outputFileName = 'converted.pdf';
                     } else {
                         const { jsPDF } = window.jspdf;
                         const doc = new jsPDF();
                         const lines = doc.splitTextToSize(state.inputText, 180);
                         doc.text(lines, 10, 10);
-                        state.outputUrl = URL.createObjectURL(doc.output('blob'));
+                        state.outputBlobUrl = URL.createObjectURL(doc.output('blob'));
+                        state.outputFileName = 'converted.pdf';
                     }
                     document.body.removeChild(container);
+
                 } else if (state.mode === 'md-to-html') {
                     if (!state.inputText.trim()) throw new Error("Please enter some Markdown text.");
-                    state.outputHtml = marked.parse(state.inputText);
+                    const html = marked.parse(state.inputText);
+                    state.outputHtml = html;
+                    state.outputFileName = 'converted.html';
+                    state.outputBlobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+
                 } else if (state.mode === 'html-to-md') {
                     if (!state.inputText.trim()) throw new Error("Please enter some HTML text.");
                     const turndownService = new TurndownService();
-                    state.inputText = turndownService.turndown(state.inputText);
-                    state.outputHtml = 'Converted HTML to MD! See input text above.';
-                } else if (state.mode === 'pdf-to-md') {
-                    if (!state.pdfFile) throw new Error("Please select a PDF file");
-                    const arrayBuffer = await state.pdfFile.arrayBuffer();
-                    const pdf = await window.pdfjsLib.getDocument(arrayBuffer).promise;
-                    let text = '';
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const content = await page.getTextContent();
-                        const strings = content.items.map(item => item.str);
-                        text += strings.join(' ') + '\n\n';
-                    }
-                    state.inputText = text;
-                    state.outputHtml = 'Extracted text from PDF! See input text above.';
+                    const md = turndownService.turndown(state.inputText);
+                    state.outputMarkdown = md;
+                    state.outputFileName = 'converted.md';
+                    state.outputBlobUrl = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
+                    state.outputHtml = marked.parse(md);
                 }
             } catch (err) {
-                alert('Error processing: ' + err.message);
+                alert('Conversion Error: ' + err.message);
                 console.error(err);
             }
 
@@ -147,30 +284,56 @@
             render();
         }
 
-        function handleShare() {
-            navigator.clipboard.writeText(window.location.href);
-            alert('Link copied to clipboard!');
-        }
+        window.copyOutputMarkdown = (btn) => {
+            const text = state.outputMarkdown || state.outputHtml;
+            if (!text) return;
+            navigator.clipboard.writeText(text).then(() => {
+                if (btn) {
+                    const original = btn.innerHTML;
+                    btn.innerHTML = `<span class="text-emerald-500 font-bold">✓ Copied!</span>`;
+                    setTimeout(() => { btn.innerHTML = original; }, 2000);
+                } else {
+                    alert('Copied to clipboard!');
+                }
+            });
+        };
 
-        function handleBookmark() {
-            navigator.clipboard.writeText(window.location.href);
-            alert('URL copied to clipboard! Press Ctrl+D (Cmd+D on Mac) to bookmark this page.');
-        }
+        window.resetConverter = () => {
+            if (state.outputBlobUrl) {
+                URL.revokeObjectURL(state.outputBlobUrl);
+                state.outputBlobUrl = null;
+            }
+            state.outputMarkdown = '';
+            state.outputHtml = '';
+            state.pdfFile = null;
+            state.inputText = '';
+            state.stats = null;
+            render();
+        };
 
-        // Render
+        window.setPreviewTab = (tab) => {
+            state.previewTab = tab;
+            render();
+        };
+
+        // Render UI
         function render() {
             const { Button, Card, TextArea } = window.zm.ui;
-
             const isPdfInput = state.mode === 'pdf-to-md';
+            const hasMarkdownOutput = !!state.outputMarkdown;
+            const hasPdfOutput = !!state.outputBlobUrl && state.mode === 'md-to-pdf';
+            const hasHtmlOutput = !!state.outputHtml && state.mode === 'md-to-html';
 
-            let interfaceContent = `
-                <div class="space-y-5">
-                    <div class="mb-4">
-                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">Conversion Direction</label>
+            let html = `
+                <div class="space-y-6">
+                    <!-- Conversion Direction Selector -->
+                    <div class="bg-slate-100/80 dark:bg-slate-900/80 p-3 sm:p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">Conversion Direction</label>
                         <div class="relative">
                             <select 
-                                class="w-full rounded-xl border border-slate-300 dark:border-slate-700 shadow-2xs focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 text-sm font-semibold bg-slate-50/90 dark:bg-slate-950/70 text-slate-900 dark:text-white p-3 pr-10 appearance-none transition-colors"
-                                onchange="state.mode = this.value; state.inputText = ''; state.pdfFile = null; render();"
+                                id="mode-select"
+                                class="w-full rounded-xl border border-slate-300 dark:border-slate-700 shadow-2xs focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 text-sm font-semibold bg-white dark:bg-slate-950 text-slate-900 dark:text-white p-3 pr-10 appearance-none transition-colors"
+                                onchange="state.mode = this.value; window.resetConverter();"
                             >
                                 ${modes.map(m => `<option value="${m.id}" ${state.mode === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
                             </select>
@@ -181,77 +344,170 @@
                     </div>
             `;
 
-            if (isPdfInput) {
-                interfaceContent += `
-                    <div class="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-400 rounded-2xl p-8 sm:p-10 text-center transition-all duration-200 cursor-pointer bg-slate-50/80 dark:bg-slate-950/60 hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20 group">
+            // Input Section (hide file selector once output is ready in pdf-to-md to focus on results)
+            if (isPdfInput && !hasMarkdownOutput) {
+                html += `
+                    <div class="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-400 rounded-2xl p-8 sm:p-12 text-center transition-all duration-200 cursor-pointer bg-slate-50/80 dark:bg-slate-950/60 hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20 group" id="drop-zone">
                         <input type="file" id="file-input" accept="application/pdf" class="hidden" onchange="window.handleFileSelect(event)">
                         <label for="file-input" class="cursor-pointer block">
-                            <div class="p-3.5 w-14 h-14 mx-auto bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xs mb-3 group-hover:scale-105 group-hover:border-emerald-500/50 group-hover:text-emerald-500 transition-all text-slate-500 dark:text-slate-400 flex items-center justify-center">
-                                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            <div class="p-4 w-16 h-16 mx-auto bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xs mb-4 group-hover:scale-105 group-hover:border-emerald-500/50 group-hover:text-emerald-500 transition-all text-slate-500 dark:text-slate-400 flex items-center justify-center">
+                                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                             </div>
-                            <p class="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                                <span class="font-bold text-emerald-600 dark:text-emerald-400 group-hover:underline">Click to select PDF</span> or drag and drop
+                            <p class="text-base font-bold text-slate-800 dark:text-slate-100">
+                                <span class="text-emerald-600 dark:text-emerald-400 group-hover:underline">Click to select PDF</span> or drag & drop file
                             </p>
-                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">${state.pdfFile ? `Selected: <span class="text-emerald-600 dark:text-emerald-400 font-bold">${state.pdfFile.name}</span>` : 'PDF files up to 50MB'}</p>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-2 font-medium">
+                                ${state.pdfFile ? `Selected: <span class="text-emerald-600 dark:text-emerald-400 font-bold">${state.pdfFile.name} (${(state.pdfFile.size / 1024 / 1024).toFixed(2)} MB)</span>` : '100% In-Browser • Files up to 100MB • Zero Cloud Uploads'}
+                            </p>
                         </label>
                     </div>
+
+                    <div class="flex justify-end mt-4">
+                        ${Button({
+                            text: state.isProcessing ? 'Extracting Markdown...' : 'Convert PDF to Markdown',
+                            onClick: 'window.handleAction()',
+                            variant: 'primary',
+                            className: 'w-full sm:w-auto px-8 py-3 text-base shadow-sm font-bold',
+                            disabled: state.isProcessing || !state.pdfFile
+                        })}
+                    </div>
                 `;
-            } else {
-                interfaceContent += TextArea({
+            } else if (!isPdfInput && !hasPdfOutput && !hasHtmlOutput && !hasMarkdownOutput) {
+                html += TextArea({
                     id: 'main-input',
-                    label: state.mode.startsWith('md') ? 'Markdown Input' : 'HTML Input',
-                    placeholder: state.mode.startsWith('md') ? '# Document Title\n\nWrite formatted **markdown** here to convert...' : '<h1>Document Title</h1>\n<p>Write HTML here...</p>',
+                    label: state.mode === 'md-to-pdf' || state.mode === 'md-to-html' ? 'Markdown Source Input' : 'HTML Source Input',
+                    placeholder: state.mode.startsWith('md') 
+                        ? '# Document Title\n\nWrite formatted **markdown** here with headings, lists, and code blocks...'
+                        : '<h1>Document Title</h1>\n<p>Paste HTML here to convert to Markdown...</p>',
                     value: state.inputText || '',
                     onInput: 'window.handleInputChange(event)',
-                    rows: 9
+                    rows: 10
                 });
+
+                html += `
+                    <div class="flex justify-end mt-4">
+                        ${Button({
+                            text: state.isProcessing ? 'Converting...' : 'Convert Document',
+                            onClick: 'window.handleAction()',
+                            variant: 'primary',
+                            className: 'w-full sm:w-auto px-8 py-3 text-base shadow-sm font-bold',
+                            disabled: state.isProcessing || !state.inputText.trim()
+                        })}
+                    </div>
+                `;
             }
 
-            interfaceContent += `
-                <div class="flex justify-end mt-4">
-                    ${Button({
-                        text: state.isProcessing ? 'Converting...' : 'Convert Document',
-                        onClick: 'window.handleAction()',
-                        variant: 'primary',
-                        className: 'w-full sm:w-auto px-8 py-3 text-base',
-                        disabled: state.isProcessing || (isPdfInput && !state.pdfFile) || (!isPdfInput && !state.inputText)
-                    })}
-                </div>
-            `;
+            // Results Section for PDF-to-MD or HTML-to-MD (Markdown Output)
+            if (hasMarkdownOutput) {
+                html += `
+                    <div class="bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-2xl p-6 shadow-sm space-y-4">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-emerald-200 dark:border-emerald-800/80">
+                            <div class="flex items-center gap-3">
+                                <div class="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                </div>
+                                <div>
+                                    <h4 class="text-base font-bold text-emerald-950 dark:text-emerald-100">Conversion Complete</h4>
+                                    <p class="text-xs text-emerald-800 dark:text-emerald-300">
+                                        ${state.stats ? `Extracted ${state.stats.pages} page(s) • ~${state.stats.words.toLocaleString()} words` : 'Extracted clean Markdown structure'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <a href="${state.outputBlobUrl}" download="${state.outputFileName}" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl shadow-xs transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                    Download .md
+                                </a>
+                                <button onclick="window.copyOutputMarkdown(this)" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-sm rounded-xl shadow-xs transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    Copy Markdown
+                                </button>
+                                <button onclick="window.resetConverter()" class="px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors">
+                                    Convert Another
+                                </button>
+                            </div>
+                        </div>
 
-            if (state.outputUrl) {
-                interfaceContent += `
+                        <!-- Tab switcher -->
+                        <div class="flex items-center gap-2 pt-1">
+                            <button onclick="window.setPreviewTab('raw')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${state.previewTab === 'raw' ? 'bg-emerald-600 text-white' : 'bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700'}">
+                                Raw Markdown (.md)
+                            </button>
+                            <button onclick="window.setPreviewTab('preview')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${state.previewTab === 'preview' ? 'bg-emerald-600 text-white' : 'bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700'}">
+                                Formatted Preview
+                            </button>
+                        </div>
+
+                        <!-- Tab contents -->
+                        ${state.previewTab === 'raw' ? `
+                            <div class="relative">
+                                <textarea readonly class="w-full h-80 rounded-xl bg-white dark:bg-slate-950 font-mono text-xs sm:text-sm p-4 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 leading-relaxed shadow-inner" id="output-markdown">${state.outputMarkdown}</textarea>
+                            </div>
+                        ` : `
+                            <div id="preview-output" class="bg-white dark:bg-slate-950 p-6 rounded-xl border border-slate-300 dark:border-slate-700 max-h-96 overflow-y-auto prose dark:prose-invert max-w-none text-sm shadow-inner">
+                                ${state.outputHtml}
+                            </div>
+                        `}
+                    </div>
+                `;
+            }
+
+            // Results Section for Markdown to PDF
+            if (hasPdfOutput) {
+                html += `
                     <div class="mt-6 p-6 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
                         <div class="flex items-center gap-3">
                             <div class="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                             </div>
                             <div>
-                                <h4 class="text-sm font-bold text-emerald-950 dark:text-emerald-100">Conversion Complete</h4>
-                                <p class="text-xs text-emerald-700 dark:text-emerald-300">Your PDF was rendered client-side with zero uploads.</p>
+                                <h4 class="text-sm font-bold text-emerald-950 dark:text-emerald-100">PDF Ready</h4>
+                                <p class="text-xs text-emerald-700 dark:text-emerald-300">Document compiled client-side with zero cloud uploads.</p>
                             </div>
                         </div>
-                        <a href="${state.outputUrl}" download="converted.pdf" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-xs transition-colors">
-                            Download PDF →
-                        </a>
-                    </div>
-                `;
-            } else if (state.outputHtml) {
-                interfaceContent += `
-                    <div class="mt-6 p-5 border border-slate-300 dark:border-slate-700 rounded-2xl bg-slate-50/80 dark:bg-slate-950/80 max-h-80 overflow-y-auto">
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>Rendered Output Preview:</h4>
-                        <div class="prose dark:prose-invert max-w-none text-sm text-slate-800 dark:text-slate-200">${state.outputHtml}</div>
+                        <div class="flex items-center gap-3">
+                            <a href="${state.outputBlobUrl}" download="${state.outputFileName}" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-xs transition-colors">
+                                Download PDF →
+                            </a>
+                            <button onclick="window.resetConverter()" class="px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors">
+                                Reset
+                            </button>
+                        </div>
                     </div>
                 `;
             }
 
-            interfaceContent += `</div>`;
+            // Results Section for Markdown to HTML
+            if (hasHtmlOutput && state.mode === 'md-to-html') {
+                html += `
+                    <div class="mt-6 p-6 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl space-y-4">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-sm font-bold text-slate-900 dark:text-white">Rendered HTML Output</h4>
+                            <div class="flex items-center gap-2">
+                                <a href="${state.outputBlobUrl}" download="${state.outputFileName}" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-xs">Download .html</a>
+                                <button onclick="window.copyOutputMarkdown(this)" class="px-3 py-1.5 bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-lg">Copy HTML</button>
+                                <button onclick="window.resetConverter()" class="px-2 py-1 text-xs text-slate-500">Reset</button>
+                            </div>
+                        </div>
+                        <div class="bg-white dark:bg-slate-950 p-6 rounded-xl border border-slate-200 dark:border-slate-800 max-h-80 overflow-y-auto prose dark:prose-invert max-w-none text-sm">
+                            ${state.outputHtml}
+                        </div>
+                    </div>
+                `;
+            }
 
-            app.innerHTML = interfaceContent;
+            html += `</div>`;
+            app.innerHTML = html;
         }
 
         // Global handlers
-        window.handleInputChange = (e) => { state.inputText = e.target.value; render(); };
+        window.handleInputChange = (e) => { 
+            state.inputText = e.target.value; 
+            const btn = document.querySelector('button[onclick="window.handleAction()"]');
+            if (btn && !state.isProcessing) {
+                btn.disabled = !state.inputText.trim();
+            }
+        };
         window.handleFileSelect = (e) => { 
             if (e.target.files && e.target.files[0]) {
                 state.pdfFile = e.target.files[0];
@@ -259,13 +515,26 @@
             }
         };
         window.handleAction = handleAction;
-        window.handleShare = handleShare;
-        window.handleBookmark = handleBookmark;
+        window.handleShare = () => {
+            navigator.clipboard.writeText(window.location.href);
+            alert('Link copied to clipboard!');
+        };
+        window.handleBookmark = () => {
+            navigator.clipboard.writeText(window.location.href);
+            alert('URL copied to clipboard! Press Ctrl+D (Cmd+D on Mac) to bookmark this page.');
+        };
 
         // Initialize theme
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         document.documentElement.classList.toggle('dark', savedTheme === 'dark');
         document.documentElement.dataset.theme = savedTheme;
+
+        // Listen for input on main-input
+        app.addEventListener('input', (e) => {
+            if (e.target && e.target.id === 'main-input') {
+                window.handleInputChange(e);
+            }
+        });
 
         // Initial render
         render();

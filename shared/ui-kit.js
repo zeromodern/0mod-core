@@ -45,13 +45,14 @@ const Input = ({ id, label, type = 'text', placeholder = '', value = '', classNa
   `;
 };
 
-const TextArea = ({ id, label, placeholder = '', value = '', rows = 5, className = '' }) => {
+const TextArea = ({ id, label, placeholder = '', value = '', rows = 5, className = '', onInput = '' }) => {
   return `
     <div class="mb-4 ${className}">
       ${label ? `<label for="${id}" class="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">${label}</label>` : ''}
       <textarea
         id="${id}"
         rows="${rows}"
+        ${onInput ? `oninput="${onInput}"` : ''}
         class="w-full p-3.5 bg-slate-50/90 dark:bg-slate-950/70 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl shadow-xs font-mono text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors placeholder:text-slate-400"
         placeholder="${placeholder}"
       >${value}</textarea>
